@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:build:nightly": "tauri build --config src-tauri/tauri.nightly.conf.json",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write . && cd src-tauri && cargo fmt",
