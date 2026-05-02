@@ -6,6 +6,7 @@ import {
   normalizeKey,
 } from "../../lib/utils/keyboard";
 import { ResetButton } from "../ui/ResetButton";
+import TrashIcon from "../icons/TrashIcon";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
@@ -26,38 +27,34 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   disabled = false,
 }) => {
   const { t } = useTranslation();
-  const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
-    useSettings();
+  const {
+    getSetting,
+    addBinding,
+    removeBinding,
+    resetBinding,
+    clearBinding,
+    isUpdating,
+    isLoading,
+  } = useSettings();
   const [keyPressed, setKeyPressed] = useState<string[]>([]);
   const [recordedKeys, setRecordedKeys] = useState<string[]>([]);
-  const [editingShortcutId, setEditingShortcutId] = useState<string | null>(
-    null,
-  );
-  const [originalBinding, setOriginalBinding] = useState<string>("");
-  const shortcutRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
+  const [isRecording, setIsRecording] = useState(false);
+  const recordingRef = useRef<HTMLDivElement | null>(null);
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
 
+  // Keyboard listeners — only active while recording a new hotkey
   useEffect(() => {
-    // Only add event listeners when we're in editing mode
-    if (editingShortcutId === null) return;
-
+    if (!isRecording) return;
     let cleanup = false;
 
-    // Keyboard event listeners
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      if (cleanup) return;
-      if (e.repeat) return; // ignore auto-repeat
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (cleanup || e.repeat) return;
       e.preventDefault();
-
-      // Get the key with OS-specific naming and normalize it
-      const rawKey = getKeyName(e, osType);
-      const key = normalizeKey(rawKey);
-
+      const key = normalizeKey(getKeyName(e, osType));
       if (!keyPressed.includes(key)) {
         setKeyPressed((prev) => [...prev, key]);
-        // Also add to recorded keys if not already there
         if (!recordedKeys.includes(key)) {
           setRecordedKeys((prev) => [...prev, key]);
         }
@@ -67,19 +64,11 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
     const handleKeyUp = async (e: KeyboardEvent) => {
       if (cleanup) return;
       e.preventDefault();
-
-      // Get the key with OS-specific naming and normalize it
-      const rawKey = getKeyName(e, osType);
-      const key = normalizeKey(rawKey);
-
-      // Remove from currently pressed keys
+      const key = normalizeKey(getKeyName(e, osType));
       setKeyPressed((prev) => prev.filter((k) => k !== key));
 
-      // If no keys are pressed anymore, commit the shortcut
       const updatedKeyPressed = keyPressed.filter((k) => k !== key);
       if (updatedKeyPressed.length === 0 && recordedKeys.length > 0) {
-        // Create the shortcut string from all recorded keys
-        // Sort keys so modifiers come first, then the main key
         const modifiers = [
           "ctrl",
           "control",
@@ -93,73 +82,48 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
           "win",
           "windows",
         ];
-        const sortedKeys = recordedKeys.sort((a, b) => {
-          const aIsModifier = modifiers.includes(a.toLowerCase());
-          const bIsModifier = modifiers.includes(b.toLowerCase());
-          if (aIsModifier && !bIsModifier) return -1;
-          if (!aIsModifier && bIsModifier) return 1;
+        const sortedKeys = [...recordedKeys].sort((a, b) => {
+          const aMod = modifiers.includes(a.toLowerCase());
+          const bMod = modifiers.includes(b.toLowerCase());
+          if (aMod && !bMod) return -1;
+          if (!aMod && bMod) return 1;
           return 0;
         });
         const newShortcut = sortedKeys.join("+");
 
-        if (editingShortcutId && bindings[editingShortcutId]) {
-          try {
-            await updateBinding(editingShortcutId, newShortcut);
-          } catch (error) {
-            console.error("Failed to change binding:", error);
-            toast.error(
-              t("settings.general.shortcut.errors.set", {
-                error: String(error),
-              }),
-            );
-
-            // Reset to original binding on error
-            if (originalBinding) {
-              try {
-                await updateBinding(editingShortcutId, originalBinding);
-              } catch (resetError) {
-                console.error("Failed to reset binding:", resetError);
-                toast.error(t("settings.general.shortcut.errors.reset"));
-              }
-            }
-          }
-
-          // Exit editing mode and reset states
-          setEditingShortcutId(null);
-          setKeyPressed([]);
-          setRecordedKeys([]);
-          setOriginalBinding("");
+        try {
+          await addBinding(shortcutId, newShortcut);
+        } catch (error) {
+          console.error("Failed to add binding:", error);
+          toast.error(
+            t("settings.general.shortcut.errors.set", {
+              error: String(error),
+            }),
+          );
         }
+        commands.resumeBinding(shortcutId).catch(console.error);
+        setIsRecording(false);
+        setKeyPressed([]);
+        setRecordedKeys([]);
       }
     };
 
-    // Add click outside handler
-    const handleClickOutside = async (e: MouseEvent) => {
+    const handleClickOutside = (e: MouseEvent) => {
       if (cleanup) return;
-      const activeElement = shortcutRefs.current.get(editingShortcutId);
-      if (activeElement && !activeElement.contains(e.target as Node)) {
-        // Cancel shortcut recording and restore original binding
-        if (editingShortcutId && originalBinding) {
-          try {
-            await updateBinding(editingShortcutId, originalBinding);
-          } catch (error) {
-            console.error("Failed to restore original binding:", error);
-            toast.error(t("settings.general.shortcut.errors.restore"));
-          }
-        } else if (editingShortcutId) {
-          commands.resumeBinding(editingShortcutId).catch(console.error);
-        }
-        setEditingShortcutId(null);
+      if (
+        recordingRef.current &&
+        !recordingRef.current.contains(e.target as Node)
+      ) {
+        commands.resumeBinding(shortcutId).catch(console.error);
+        setIsRecording(false);
         setKeyPressed([]);
         setRecordedKeys([]);
-        setOriginalBinding("");
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     window.addEventListener("click", handleClickOutside);
-
     return () => {
       cleanup = true;
       window.removeEventListener("keydown", handleKeyDown);
@@ -167,44 +131,30 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
       window.removeEventListener("click", handleClickOutside);
     };
   }, [
+    isRecording,
     keyPressed,
     recordedKeys,
-    editingShortcutId,
-    bindings,
-    originalBinding,
-    updateBinding,
+    shortcutId,
     osType,
+    addBinding,
+    t,
   ]);
 
-  // Start recording a new shortcut
-  const startRecording = async (id: string) => {
-    if (editingShortcutId === id) return; // Already editing this shortcut
-
-    // Suspend current binding to avoid firing while recording
-    await commands.suspendBinding(id).catch(console.error);
-
-    // Store the original binding to restore if canceled
-    setOriginalBinding(bindings[id]?.current_binding || "");
-    setEditingShortcutId(id);
+  const startRecording = async () => {
+    if (isRecording) return;
+    // Suspend existing bindings so they don't fire while recording
+    await commands.suspendBinding(shortcutId).catch(console.error);
+    setIsRecording(true);
     setKeyPressed([]);
     setRecordedKeys([]);
   };
 
-  // Format the current shortcut keys being recorded
   const formatCurrentKeys = (): string => {
     if (recordedKeys.length === 0)
       return t("settings.general.shortcut.pressKeys");
-
-    // Use the same formatting as the display to ensure consistency
     return formatKeyCombination(recordedKeys.join("+"), osType);
   };
 
-  // Store references to shortcut elements
-  const setShortcutRef = (id: string, ref: HTMLDivElement | null) => {
-    shortcutRefs.current.set(id, ref);
-  };
-
-  // If still loading, show loading state
   if (isLoading) {
     return (
       <SettingContainer
@@ -220,7 +170,6 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
     );
   }
 
-  // If no bindings are loaded, show empty state
   if (Object.keys(bindings).length === 0) {
     return (
       <SettingContainer
@@ -252,7 +201,6 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
     );
   }
 
-  // Get translated name and description for the binding
   const translatedName = t(
     `settings.general.shortcut.bindings.${shortcutId}.name`,
     binding.name,
@@ -261,6 +209,9 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
     `settings.general.shortcut.bindings.${shortcutId}.description`,
     binding.description,
   );
+
+  const hotkeys = binding.current_bindings ?? [];
+  const updating = isUpdating(`binding_${shortcutId}`);
 
   return (
     <SettingContainer
@@ -271,26 +222,77 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
       disabled={disabled}
       layout="horizontal"
     >
-      <div className="flex items-center space-x-1">
-        {editingShortcutId === shortcutId ? (
+      <div className="flex flex-wrap items-center gap-1.5 justify-end">
+        {hotkeys.map((hk) => (
           <div
-            ref={(ref) => setShortcutRef(shortcutId, ref)}
-            className="px-2 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/30 rounded-md"
+            key={hk}
+            className="group inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 rounded-md hover:border-mid-gray/60 transition-colors"
+          >
+            <span>{formatKeyCombination(hk, osType)}</span>
+            <button
+              onClick={async () => {
+                try {
+                  await removeBinding(shortcutId, hk);
+                } catch (error) {
+                  console.error("Failed to remove binding:", error);
+                  toast.error(
+                    t("settings.general.shortcut.errors.set", {
+                      error: String(error),
+                    }),
+                  );
+                }
+              }}
+              disabled={updating}
+              className="opacity-0 group-hover:opacity-100 transition-opacity text-mid-gray hover:text-logo-primary disabled:cursor-not-allowed rounded p-0.5"
+              title={t("settings.general.shortcut.remove", "Remove")}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path
+                  d="M1.5 1.5l7 7M8.5 1.5l-7 7"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          </div>
+        ))}
+        {isRecording ? (
+          <div
+            ref={recordingRef}
+            className="inline-flex items-center px-2.5 py-1 text-sm font-semibold border border-logo-primary bg-logo-primary/20 rounded-md"
           >
             {formatCurrentKeys()}
           </div>
         ) : (
-          <div
-            className="px-2 py-1 text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 hover:bg-logo-primary/10 rounded-md cursor-pointer hover:border-logo-primary"
-            onClick={() => startRecording(shortcutId)}
+          <button
+            className={`px-2.5 py-1 text-sm rounded-md transition-colors disabled:opacity-50 ${
+              hotkeys.length === 0
+                ? "font-semibold bg-mid-gray/10 border border-mid-gray/80 hover:bg-logo-primary/10 hover:border-logo-primary"
+                : "font-medium border border-dashed border-mid-gray/50 text-mid-gray hover:border-logo-primary hover:text-logo-primary hover:bg-logo-primary/5"
+            }`}
+            onClick={startRecording}
+            disabled={updating}
           >
-            {formatKeyCombination(binding.current_binding, osType)}
-          </div>
+            {hotkeys.length === 0
+              ? t("settings.general.shortcut.notSet")
+              : t("settings.general.shortcut.add", "+ Add")}
+          </button>
         )}
-        <ResetButton
-          onClick={() => resetBinding(shortcutId)}
-          disabled={isUpdating(`binding_${shortcutId}`)}
-        />
+        {binding.default_binding ? (
+          <ResetButton
+            onClick={() => resetBinding(shortcutId)}
+            disabled={updating}
+          />
+        ) : null}
+        {hotkeys.length > 0 && (
+          <ResetButton
+            onClick={() => clearBinding(shortcutId)}
+            disabled={updating}
+          >
+            <TrashIcon width={16} height={16} />
+          </ResetButton>
+        )}
       </div>
     </SettingContainer>
   );

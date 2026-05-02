@@ -69,39 +69,40 @@ pub fn validate_shortcut(raw: &str) -> Result<(), String> {
     }
 }
 
-/// Register a shortcut using Tauri's global-shortcut plugin
-pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
-    // Validate for Tauri requirements
-    if let Err(e) = validate_shortcut(&binding.current_binding) {
+/// Register a single hotkey for a binding ID (granular helper).
+pub fn register_hotkey(
+    app: &AppHandle,
+    binding_id: &str,
+    hotkey_string: &str,
+) -> Result<(), String> {
+    if hotkey_string.trim().is_empty() {
+        return Ok(());
+    }
+
+    if let Err(e) = validate_shortcut(hotkey_string) {
         warn!(
-            "register_tauri_shortcut validation error for binding '{}': {}",
-            binding.current_binding, e
+            "register_tauri_shortcut validation error for hotkey '{}': {}",
+            hotkey_string, e
         );
         return Err(e);
     }
 
-    // Parse shortcut and return error if it fails
-    let shortcut = match binding.current_binding.parse::<Shortcut>() {
+    let shortcut = match hotkey_string.parse::<Shortcut>() {
         Ok(s) => s,
         Err(e) => {
-            let error_msg = format!(
-                "Failed to parse shortcut '{}': {}",
-                binding.current_binding, e
-            );
+            let error_msg = format!("Failed to parse shortcut '{}': {}", hotkey_string, e);
             error!("register_tauri_shortcut parse error: {}", error_msg);
             return Err(error_msg);
         }
     };
 
-    // Prevent duplicate registrations that would silently shadow one another
     if app.global_shortcut().is_registered(shortcut) {
-        let error_msg = format!("Shortcut '{}' is already in use", binding.current_binding);
+        let error_msg = format!("Shortcut '{}' is already in use", hotkey_string);
         warn!("register_tauri_shortcut duplicate error: {}", error_msg);
         return Err(error_msg);
     }
 
-    // Clone binding.id for use in the closure
-    let binding_id_for_closure = binding.id.clone();
+    let binding_id_for_closure = binding_id.to_string();
 
     app.global_shortcut()
         .on_shortcut(shortcut, move |app_handle, scut, event| {
@@ -117,10 +118,7 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
             }
         })
         .map_err(|e| {
-            let error_msg = format!(
-                "Couldn't register shortcut '{}': {}",
-                binding.current_binding, e
-            );
+            let error_msg = format!("Couldn't register shortcut '{}': {}", hotkey_string, e);
             error!("register_tauri_shortcut registration error: {}", error_msg);
             error_msg
         })?;
@@ -128,14 +126,18 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
     Ok(())
 }
 
-/// Unregister a shortcut from Tauri's global-shortcut plugin
-pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
-    let shortcut = match binding.current_binding.parse::<Shortcut>() {
+/// Unregister a single hotkey (granular helper).
+pub fn unregister_hotkey(app: &AppHandle, hotkey_string: &str) -> Result<(), String> {
+    if hotkey_string.trim().is_empty() {
+        return Ok(());
+    }
+
+    let shortcut = match hotkey_string.parse::<Shortcut>() {
         Ok(s) => s,
         Err(e) => {
             let error_msg = format!(
                 "Failed to parse shortcut '{}' for unregistration: {}",
-                binding.current_binding, e
+                hotkey_string, e
             );
             error!("unregister_tauri_shortcut parse error: {}", error_msg);
             return Err(error_msg);
@@ -145,12 +147,45 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
     app.global_shortcut().unregister(shortcut).map_err(|e| {
         let error_msg = format!(
             "Failed to unregister shortcut '{}': {}",
-            binding.current_binding, e
+            hotkey_string, e
         );
         error!("unregister_tauri_shortcut error: {}", error_msg);
         error_msg
     })?;
 
+    Ok(())
+}
+
+/// Register every hotkey in a binding using Tauri's global-shortcut plugin.
+/// Returns Ok if at least one hotkey registered (or there were none); errors
+/// from individual hotkeys are logged but do not abort the rest.
+pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    let mut last_err: Option<String> = None;
+    for hk in &binding.current_bindings {
+        if let Err(e) = register_hotkey(app, &binding.id, hk) {
+            warn!(
+                "register_shortcut: failed to register '{}' on binding '{}': {}",
+                hk, binding.id, e
+            );
+            last_err = Some(e);
+        }
+    }
+    match last_err {
+        Some(e) if binding.current_bindings.len() == 1 => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// Unregister every hotkey in a binding.
+pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    for hk in &binding.current_bindings {
+        if let Err(e) = unregister_hotkey(app, hk) {
+            warn!(
+                "unregister_shortcut: failed to unregister '{}' on binding '{}': {}",
+                hk, binding.id, e
+            );
+        }
+    }
     Ok(())
 }
 
