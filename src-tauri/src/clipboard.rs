@@ -584,6 +584,22 @@ fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), Str
     Ok(())
 }
 
+pub fn press_enter_key(app_handle: &AppHandle) -> Result<(), String> {
+    let enigo_state = app_handle
+        .try_state::<EnigoState>()
+        .ok_or("Enigo state not initialized")?;
+    let mut enigo = enigo_state
+        .0
+        .lock()
+        .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
+    enigo
+        .key(Key::Return, Direction::Press)
+        .map_err(|e| format!("Failed to press Return key: {}", e))?;
+    enigo
+        .key(Key::Return, Direction::Release)
+        .map_err(|e| format!("Failed to release Return key: {}", e))
+}
+
 fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool {
     auto_submit && paste_method != PasteMethod::None
 }

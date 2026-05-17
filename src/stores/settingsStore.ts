@@ -158,6 +158,8 @@ const settingUpdaters: {
     commands.changeExtraRecordingBufferSetting(value as number),
   noise_suppression: (value) =>
     commands.setNoiseSuppression(value as boolean),
+  keyword_actions_enabled: (value) =>
+    commands.changeKeywordActionsEnabledSetting(value as boolean),
 };
 
 export const useSettingsStore = create<SettingsStore>()(
