@@ -127,6 +127,7 @@ fn create_audio_recorder(
 
     // Recorder with VAD plus a spectrum-level callback that forwards updates to
     // the frontend.
+    let settings = crate::settings::get_settings(app_handle);
     let recorder = AudioRecorder::new()
         .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
         .with_vad(Box::new(smoothed_vad))
@@ -135,7 +136,8 @@ fn create_audio_recorder(
             move |levels| {
                 utils::emit_levels(&app_handle, &levels);
             }
-        });
+        })
+        .with_noise_suppression(settings.noise_suppression);
 
     Ok(recorder)
 }
