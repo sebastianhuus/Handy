@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:nightly": "vite --config vite.nightly.config.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:dev:nightly": "tauri dev --config src-tauri/tauri.nightly.conf.json",
     "tauri:build:nightly": "tauri build --config src-tauri/tauri.nightly.conf.json",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",

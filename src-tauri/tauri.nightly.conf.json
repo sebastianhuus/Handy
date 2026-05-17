@@ -2,5 +2,9 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Handy Nightly",
   "identifier": "com.pais.handy.nightly",
-  "mainBinaryName": "Handy Nightly"
+  "mainBinaryName": "Handy Nightly",
+  "build": {
+    "beforeDevCommand": "bun run dev:nightly",
+    "devUrl": "http://localhost:1422"
+  }
 }
