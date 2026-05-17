@@ -14,8 +14,10 @@
 
 use log::debug;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+use tauri::AppHandle;
 
 type TISInputSourceRef = *const c_void;
 type Boolean = u8;
@@ -73,28 +75,52 @@ pub fn hotkey_contains_fn(hotkey_string: &str) -> bool {
         .any(|k| k.trim().eq_ignore_ascii_case("fn"))
 }
 
+/// Whether a watcher is already in flight. Skipping re-arming while one
+/// is active dedupes spam (e.g. mashing Fn) so we don't fan out into N
+/// concurrent threads competing for IMK's Mach ports.
+static ARMED: AtomicBool = AtomicBool::new(false);
+
 /// Snapshot the current input source and revert any change that happens
-/// within `REVERT_WINDOW`. Cheap to call from event-handling hot paths:
-/// one TISCopy plus a thread spawn.
-pub fn arm() {
+/// within `REVERT_WINDOW`. Safe to call from any thread; the actual
+/// TIS calls run on the Tauri main thread because IMK requires a
+/// CFRunLoop and concurrent calls from raw worker threads produce
+/// "error messaging the mach port for IMKCFRunLoopWakeUpReliable"
+/// and eventually crash.
+pub fn arm(app: &AppHandle) {
+    if ARMED.swap(true, Ordering::AcqRel) {
+        // A watcher is already running; it will catch any change that
+        // happens within its window, so additional arms are no-ops.
+        return;
+    }
+
     let Some(saved) = OwnedInputSource::from_raw(unsafe { TISCopyCurrentKeyboardInputSource() })
     else {
+        ARMED.store(false, Ordering::Release);
         return;
     };
 
+    let app = app.clone();
     thread::spawn(move || {
         thread::sleep(REVERT_WINDOW);
 
-        let Some(current) =
-            OwnedInputSource::from_raw(unsafe { TISCopyCurrentKeyboardInputSource() })
-        else {
-            return;
-        };
+        let dispatched = app.run_on_main_thread(move || {
+            if let Some(current) =
+                OwnedInputSource::from_raw(unsafe { TISCopyCurrentKeyboardInputSource() })
+            {
+                let same = unsafe { CFEqual(saved.as_ptr(), current.as_ptr()) } != 0;
+                if !same {
+                    debug!("Reverting Globe-tap-induced input-source change");
+                    let _ = unsafe { TISSelectInputSource(saved.as_ptr()) };
+                }
+            }
+            ARMED.store(false, Ordering::Release);
+        });
 
-        let same = unsafe { CFEqual(saved.as_ptr(), current.as_ptr()) } != 0;
-        if !same {
-            debug!("Reverting Globe-tap-induced input-source change");
-            let _ = unsafe { TISSelectInputSource(saved.as_ptr()) };
+        if dispatched.is_err() {
+            // Main thread is gone (e.g. app shutting down). Release the
+            // flag so we don't permanently block future arms — though
+            // at that point there won't be any.
+            ARMED.store(false, Ordering::Release);
         }
     });
 }
