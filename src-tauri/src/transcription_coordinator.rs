@@ -26,7 +26,13 @@ enum Command {
 /// Pipeline lifecycle, owned exclusively by the coordinator thread.
 enum Stage {
     Idle,
-    Recording(String), // binding_id
+    /// PTT recording: stops when the same PTT key is released.
+    /// The stored binding_id is also what the audio manager started under.
+    Recording(String),
+    /// Toggle recording: stops on the next press of any transcription key.
+    /// The stored binding_id is what the audio manager started under (may differ
+    /// from the key the user pressed to start, e.g. after a PTT→toggle upgrade).
+    RecordingToggle(String),
     Processing,
 }
 
@@ -70,20 +76,46 @@ impl TranscriptionCoordinator {
                             }
 
                             if push_to_talk {
-                                if is_pressed && matches!(stage, Stage::Idle) {
-                                    start(&app, &mut stage, &binding_id, &hotkey_string);
-                                } else if !is_pressed
-                                    && matches!(&stage, Stage::Recording(id) if id == &binding_id)
-                                {
+                                if is_pressed {
+                                    match &stage {
+                                        Stage::Idle => {
+                                            start(&app, &mut stage, &binding_id, &hotkey_string, true);
+                                        }
+                                        // PTT pressed while a toggle (or upgraded PTT) recording is
+                                        // active → stop that recording (cross-binding stop).
+                                        Stage::RecordingToggle(active_id) => {
+                                            let active = active_id.clone();
+                                            stop(&app, &mut stage, &active, &hotkey_string);
+                                        }
+                                        _ => {
+                                            debug!("Ignoring PTT press for '{binding_id}'");
+                                        }
+                                    }
+                                } else if matches!(&stage, Stage::Recording(id) if id == &binding_id) {
+                                    // Key-up only stops PTT mode; RecordingToggle ignores key-up.
                                     stop(&app, &mut stage, &binding_id, &hotkey_string);
                                 }
                             } else if is_pressed {
                                 match &stage {
                                     Stage::Idle => {
-                                        start(&app, &mut stage, &binding_id, &hotkey_string);
+                                        start(&app, &mut stage, &binding_id, &hotkey_string, false);
                                     }
-                                    Stage::Recording(id) if id == &binding_id => {
+                                    // Non-PTT binding fired while PTT is recording. handy-keys is
+                                    // order-independent, so pressing the keys in either order fires
+                                    // the longer combo. Upgrade to toggle mode without restarting
+                                    // audio — the audio manager keeps the PTT binding_id.
+                                    Stage::Recording(ptt_id) => {
+                                        let ptt = ptt_id.clone();
+                                        debug!("PTT '{ptt}' upgraded to toggle mode by '{binding_id}'");
+                                        stage = Stage::RecordingToggle(ptt);
+                                    }
+                                    Stage::RecordingToggle(active_id) if active_id == &binding_id => {
                                         stop(&app, &mut stage, &binding_id, &hotkey_string);
+                                    }
+                                    // Different toggle binding pressed while recording → cross-binding stop.
+                                    Stage::RecordingToggle(active_id) => {
+                                        let active = active_id.clone();
+                                        stop(&app, &mut stage, &active, &hotkey_string);
                                     }
                                     _ => {
                                         debug!("Ignoring press for '{binding_id}': pipeline busy")
@@ -96,7 +128,11 @@ impl TranscriptionCoordinator {
                         } => {
                             // Don't reset during processing — wait for the pipeline to finish.
                             if !matches!(stage, Stage::Processing)
-                                && (recording_was_active || matches!(stage, Stage::Recording(_)))
+                                && (recording_was_active
+                                    || matches!(
+                                        stage,
+                                        Stage::Recording(_) | Stage::RecordingToggle(_)
+                                    ))
                             {
                                 stage = Stage::Idle;
                             }
@@ -196,7 +232,7 @@ mod tests {
     }
 }
 
-fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
+fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str, is_ptt: bool) {
     let Some(action) = ACTION_MAP.get(binding_id) else {
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
@@ -206,7 +242,11 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         .try_state::<Arc<AudioRecordingManager>>()
         .map_or(false, |a| a.is_recording())
     {
-        *stage = Stage::Recording(binding_id.to_string());
+        *stage = if is_ptt {
+            Stage::Recording(binding_id.to_string())
+        } else {
+            Stage::RecordingToggle(binding_id.to_string())
+        };
     } else {
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
     }
