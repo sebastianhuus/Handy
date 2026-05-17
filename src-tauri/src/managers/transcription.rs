@@ -1,4 +1,4 @@
-use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
+use crate::audio_toolkit::{apply_correction_pairs, apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
@@ -698,6 +698,12 @@ impl TranscriptionManager {
             )
         } else {
             result.text
+        };
+
+        let corrected_result = if !settings.correction_pairs.is_empty() {
+            apply_correction_pairs(&corrected_result, &settings.correction_pairs)
+        } else {
+            corrected_result
         };
 
         // Filter out filler words and hallucinations

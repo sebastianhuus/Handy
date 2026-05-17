@@ -779,6 +779,18 @@ pub fn update_custom_words(app: AppHandle, words: Vec<String>) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+pub fn update_correction_pairs(
+    app: AppHandle,
+    pairs: Vec<settings::CorrectionPair>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.correction_pairs = pairs;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_word_correction_threshold_setting(
     app: AppHandle,
     threshold: f64,

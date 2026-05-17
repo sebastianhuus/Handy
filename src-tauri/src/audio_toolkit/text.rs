@@ -1,3 +1,4 @@
+use crate::settings::CorrectionPair;
 use natural::phonetics::soundex;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -627,4 +628,37 @@ mod tests {
             result
         );
     }
+}
+
+/// Applies exact correction pairs to transcribed text.
+///
+/// Each pair maps a commonly mis-transcribed string to its intended replacement.
+/// Matching is case-insensitive and respects word boundaries (alphanumeric edges),
+/// so "aws" won't corrupt "awesome". Pairs are applied in order.
+pub fn apply_correction_pairs(text: &str, pairs: &[CorrectionPair]) -> String {
+    if pairs.is_empty() {
+        return text.to_string();
+    }
+
+    let mut result = text.to_string();
+    for pair in pairs {
+        if pair.from.is_empty() {
+            continue;
+        }
+        let escaped = regex::escape(&pair.from);
+        // \b word boundaries work at string edges and around punctuation/spaces.
+        // Fall back to no-boundary match if the from string starts/ends with a
+        // non-word character (e.g. "#tag"), which makes \b invalid at that edge.
+        let pattern = if pair.from.chars().next().map_or(false, |c| c.is_alphanumeric())
+            && pair.from.chars().last().map_or(false, |c| c.is_alphanumeric())
+        {
+            format!(r"(?i)\b{}\b", escaped)
+        } else {
+            format!(r"(?i){}", escaped)
+        };
+        if let Ok(re) = Regex::new(&pattern) {
+            result = re.replace_all(&result, pair.to.as_str()).into_owned();
+        }
+    }
+    result
 }
