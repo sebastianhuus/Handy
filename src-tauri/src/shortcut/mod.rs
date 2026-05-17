@@ -523,26 +523,38 @@ fn register_all_shortcuts_for_implementation(
             continue;
         }
 
-        // Validate each hotkey for the target implementation; reset all to
-        // the default if any one fails so we never end up with a half-valid list.
-        let mut needs_reset = false;
-        for hk in &binding.current_bindings {
-            if let Err(e) = validate_shortcut_for_implementation(hk, implementation) {
-                info!(
-                    "Shortcut '{}' ({}) is invalid for {:?}: {}. Resetting to default.",
-                    id, hk, implementation, e
-                );
-                needs_reset = true;
-                break;
+        // Remove only the hotkeys that are invalid for the target implementation,
+        // keeping valid ones. Fall back to the default only if the entire list is wiped.
+        binding.current_bindings.retain(|hk| {
+            match validate_shortcut_for_implementation(hk, implementation) {
+                Ok(_) => true,
+                Err(e) => {
+                    info!(
+                        "Shortcut '{}' ({}) is invalid for {:?}: {}. Removing.",
+                        id, hk, implementation, e
+                    );
+                    false
+                }
             }
-        }
+        });
+
+        let needs_reset = binding.current_bindings.is_empty()
+            && !default_binding.default_binding.trim().is_empty();
 
         if needs_reset {
-            binding.current_bindings = if default_binding.default_binding.trim().is_empty() {
-                Vec::new()
-            } else {
-                vec![default_binding.default_binding.clone()]
-            };
+            binding.current_bindings = vec![default_binding.default_binding.clone()];
+            current_settings
+                .bindings
+                .insert(id.clone(), binding.clone());
+            reset_bindings.push(id.clone());
+        } else if binding.current_bindings.len()
+            < current_settings
+                .bindings
+                .get(id)
+                .map(|b| b.current_bindings.len())
+                .unwrap_or(0)
+        {
+            // Some hotkeys were removed but at least one remains — persist the trimmed list.
             current_settings
                 .bindings
                 .insert(id.clone(), binding.clone());
