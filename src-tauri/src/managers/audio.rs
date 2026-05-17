@@ -426,6 +426,21 @@ impl AudioRecordingManager {
         Ok(())
     }
 
+    /// Drop and recreate the recorder so settings baked in at construction
+    /// time (e.g. noise_suppression) take effect on the next open.
+    pub fn update_recorder(&self) -> Result<(), anyhow::Error> {
+        let was_open = *self.is_open.lock().unwrap();
+        if was_open {
+            self.close_generation.fetch_add(1, Ordering::SeqCst);
+            self.stop_microphone_stream();
+        }
+        *self.recorder.lock().unwrap() = None;
+        if was_open {
+            self.start_microphone_stream()?;
+        }
+        Ok(())
+    }
+
     pub fn stop_recording(&self, binding_id: &str) -> Option<Vec<f32>> {
         let mut state = self.state.lock().unwrap();
 
