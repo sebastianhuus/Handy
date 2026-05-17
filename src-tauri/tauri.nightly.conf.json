@@ -6,5 +6,10 @@
   "build": {
     "beforeDevCommand": "bun run dev:nightly",
     "devUrl": "http://localhost:1422"
+  },
+  "bundle": {
+    "macOS": {
+      "signingIdentity": "Handy Nightly Local"
+    }
   }
 }
