@@ -8,6 +8,8 @@ mod clipboard;
 mod commands;
 mod helpers;
 mod input;
+#[cfg(target_os = "macos")]
+mod macos_input_source_guard;
 mod llm_client;
 mod managers;
 mod overlay;
