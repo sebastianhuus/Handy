@@ -103,109 +103,223 @@ pub struct BindingResponse {
     error: Option<String>,
 }
 
+/// Register a single hotkey using the active keyboard implementation.
+fn register_hotkey_for_active_impl(
+    app: &AppHandle,
+    binding_id: &str,
+    hotkey_string: &str,
+) -> Result<(), String> {
+    let settings = get_settings(app);
+    match settings.keyboard_implementation {
+        KeyboardImplementation::Tauri => tauri_impl::register_hotkey(app, binding_id, hotkey_string),
+        KeyboardImplementation::HandyKeys => app
+            .try_state::<handy_keys::HandyKeysState>()
+            .ok_or_else(|| "HandyKeysState not initialized".to_string())?
+            .register_hotkey(binding_id, hotkey_string),
+    }
+}
+
+/// Unregister a single hotkey using the active keyboard implementation.
+fn unregister_hotkey_for_active_impl(
+    app: &AppHandle,
+    binding_id: &str,
+    hotkey_string: &str,
+) -> Result<(), String> {
+    let settings = get_settings(app);
+    match settings.keyboard_implementation {
+        KeyboardImplementation::Tauri => tauri_impl::unregister_hotkey(app, hotkey_string),
+        KeyboardImplementation::HandyKeys => app
+            .try_state::<handy_keys::HandyKeysState>()
+            .ok_or_else(|| "HandyKeysState not initialized".to_string())?
+            .unregister_hotkey(binding_id, hotkey_string),
+    }
+}
+
+/// Append a new hotkey to a binding. Idempotent: a hotkey already in the
+/// binding's list is reported as success without re-registering.
 #[tauri::command]
 #[specta::specta]
-pub fn change_binding(
+pub fn add_binding(
     app: AppHandle,
     id: String,
     binding: String,
 ) -> Result<BindingResponse, String> {
-    // Reject empty bindings — every shortcut should have a value
     if binding.trim().is_empty() {
         return Err("Binding cannot be empty".to_string());
     }
 
     let mut settings = settings::get_settings(&app);
 
-    // Get the binding to modify, or create it from defaults if it doesn't exist
-    let binding_to_modify = match settings.bindings.get(&id) {
-        Some(binding) => binding.clone(),
-        None => {
-            // Try to get the default binding for this id
-            let default_settings = settings::get_default_settings();
-            match default_settings.bindings.get(&id) {
-                Some(default_binding) => {
-                    warn!(
-                        "Binding '{}' not found in settings, creating from defaults",
-                        id
-                    );
-                    default_binding.clone()
-                }
-                None => {
-                    let error_msg = format!("Binding with id '{}' not found in defaults", id);
-                    warn!("change_binding error: {}", error_msg);
-                    return Ok(BindingResponse {
-                        success: false,
-                        binding: None,
-                        error: Some(error_msg),
-                    });
-                }
+    let mut current = match settings.bindings.get(&id).cloned() {
+        Some(b) => b,
+        None => match settings::get_default_settings().bindings.get(&id).cloned() {
+            Some(b) => {
+                warn!(
+                    "Binding '{}' not found in settings, creating from defaults",
+                    id
+                );
+                b
             }
-        }
+            None => {
+                let error_msg = format!("Binding with id '{}' not found in defaults", id);
+                warn!("add_binding error: {}", error_msg);
+                return Ok(BindingResponse {
+                    success: false,
+                    binding: None,
+                    error: Some(error_msg),
+                });
+            }
+        },
     };
 
-    // If this is the cancel binding, just update the settings and return
-    // It's managed dynamically, so we don't register/unregister here
-    if id == "cancel" {
-        if let Some(mut b) = settings.bindings.get(&id).cloned() {
-            b.current_binding = binding;
-            settings.bindings.insert(id.clone(), b.clone());
-            settings::write_settings(&app, settings);
+    if current.current_bindings.iter().any(|h| h == &binding) {
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(current),
+            error: None,
+        });
+    }
+
+    // Validate against the active implementation before mutating state.
+    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
+    {
+        warn!("add_binding validation error: {}", e);
+        return Err(e);
+    }
+
+    // Cancel binding is dynamically registered so we only persist; for any
+    // other binding we register the hotkey now.
+    if id != "cancel" {
+        if let Err(e) = register_hotkey_for_active_impl(&app, &id, &binding) {
+            let error_msg = format!("Failed to register shortcut: {}", e);
+            error!("add_binding error: {}", error_msg);
             return Ok(BindingResponse {
-                success: true,
-                binding: Some(b.clone()),
-                error: None,
+                success: false,
+                binding: None,
+                error: Some(error_msg),
             });
         }
     }
 
-    // Unregister the existing binding
-    if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
-        let error_msg = format!("Failed to unregister shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-    }
+    current.current_bindings.push(binding);
+    settings.bindings.insert(id.clone(), current.clone());
+    settings::write_settings(&app, settings);
 
-    // Validate the new shortcut for the current keyboard implementation
-    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
-    {
-        warn!("change_binding validation error: {}", e);
-        return Err(e);
-    }
+    Ok(BindingResponse {
+        success: true,
+        binding: Some(current),
+        error: None,
+    })
+}
 
-    // Create an updated binding
-    let mut updated_binding = binding_to_modify;
-    updated_binding.current_binding = binding;
-
-    // Register the new binding
-    if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
-        let error_msg = format!("Failed to register shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
+/// Remove a single hotkey from a binding's list.
+#[tauri::command]
+#[specta::specta]
+pub fn remove_binding(
+    app: AppHandle,
+    id: String,
+    binding: String,
+) -> Result<BindingResponse, String> {
+    let mut settings = settings::get_settings(&app);
+    let Some(mut current) = settings.bindings.get(&id).cloned() else {
         return Ok(BindingResponse {
             success: false,
             binding: None,
-            error: Some(error_msg),
+            error: Some(format!("Binding '{}' not found", id)),
+        });
+    };
+
+    let original_len = current.current_bindings.len();
+    current.current_bindings.retain(|h| h != &binding);
+
+    if current.current_bindings.len() == original_len {
+        // Hotkey wasn't present — still return current state.
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(current),
+            error: None,
         });
     }
 
-    // Update the binding in the settings
-    settings.bindings.insert(id, updated_binding.clone());
+    if id != "cancel" {
+        if let Err(e) = unregister_hotkey_for_active_impl(&app, &id, &binding) {
+            warn!("remove_binding: unregister failed for '{}': {}", binding, e);
+        }
+    }
 
-    // Save the settings
+    settings.bindings.insert(id, current.clone());
     settings::write_settings(&app, settings);
 
-    // Return the updated binding
     Ok(BindingResponse {
         success: true,
-        binding: Some(updated_binding),
+        binding: Some(current),
         error: None,
     })
 }
 
 #[tauri::command]
 #[specta::specta]
+pub fn clear_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
+    let mut settings = settings::get_settings(&app);
+    if let Some(b) = settings.bindings.get(&id).cloned() {
+        let _ = unregister_shortcut(&app, b.clone());
+        let mut cleared = b;
+        cleared.current_bindings.clear();
+        settings.bindings.insert(id, cleared.clone());
+        settings::write_settings(&app, settings);
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(cleared),
+            error: None,
+        });
+    }
+    Ok(BindingResponse {
+        success: false,
+        binding: None,
+        error: Some(format!("Binding '{}' not found", id)),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
-    let binding = settings::get_stored_binding(&app, &id);
-    change_binding(app, id, binding.default_binding)
+    let stored = settings::get_stored_binding(&app, &id);
+
+    // Always unregister whatever was previously bound.
+    let _ = unregister_shortcut(&app, stored.clone());
+
+    let mut settings = settings::get_settings(&app);
+    let Some(mut current) = settings.bindings.get(&id).cloned() else {
+        return Ok(BindingResponse {
+            success: false,
+            binding: None,
+            error: Some(format!("Binding '{}' not found", id)),
+        });
+    };
+
+    // Reset to a single-element list of the default (or empty when no default).
+    current.current_bindings = if stored.default_binding.trim().is_empty() {
+        Vec::new()
+    } else {
+        vec![stored.default_binding.clone()]
+    };
+
+    if id != "cancel" {
+        for hk in &current.current_bindings {
+            if let Err(e) = register_hotkey_for_active_impl(&app, &id, hk) {
+                warn!("reset_binding: failed to register '{}': {}", hk, e);
+            }
+        }
+    }
+
+    settings.bindings.insert(id, current.clone());
+    settings::write_settings(&app, settings);
+
+    Ok(BindingResponse {
+        success: true,
+        binding: Some(current),
+        error: None,
+    })
 }
 
 /// Temporarily unregister a binding while the user is editing it in the UI.
@@ -405,24 +519,48 @@ fn register_all_shortcuts_for_implementation(
             .cloned()
             .unwrap_or_else(|| default_binding.clone());
 
-        // Validate the shortcut for the target implementation
-        if let Err(e) =
-            validate_shortcut_for_implementation(&binding.current_binding, implementation)
-        {
-            info!(
-                "Shortcut '{}' ({}) is invalid for {:?}: {}. Resetting to default.",
-                id, binding.current_binding, implementation, e
-            );
+        if binding.current_bindings.is_empty() {
+            continue;
+        }
 
-            // Reset to default
-            binding.current_binding = default_binding.current_binding.clone();
+        // Remove only the hotkeys that are invalid for the target implementation,
+        // keeping valid ones. Fall back to the default only if the entire list is wiped.
+        binding.current_bindings.retain(|hk| {
+            match validate_shortcut_for_implementation(hk, implementation) {
+                Ok(_) => true,
+                Err(e) => {
+                    info!(
+                        "Shortcut '{}' ({}) is invalid for {:?}: {}. Removing.",
+                        id, hk, implementation, e
+                    );
+                    false
+                }
+            }
+        });
+
+        let needs_reset = binding.current_bindings.is_empty()
+            && !default_binding.default_binding.trim().is_empty();
+
+        if needs_reset {
+            binding.current_bindings = vec![default_binding.default_binding.clone()];
+            current_settings
+                .bindings
+                .insert(id.clone(), binding.clone());
+            reset_bindings.push(id.clone());
+        } else if binding.current_bindings.len()
+            < current_settings
+                .bindings
+                .get(id)
+                .map(|b| b.current_bindings.len())
+                .unwrap_or(0)
+        {
+            // Some hotkeys were removed but at least one remains — persist the trimmed list.
             current_settings
                 .bindings
                 .insert(id.clone(), binding.clone());
             reset_bindings.push(id.clone());
         }
 
-        // Register with the appropriate implementation
         let result = match implementation {
             KeyboardImplementation::Tauri => tauri_impl::register_shortcut(app, binding),
             KeyboardImplementation::HandyKeys => handy_keys::register_shortcut(app, binding),
@@ -470,15 +608,6 @@ fn initialize_handy_keys_with_rollback(app: &AppHandle) -> Result<bool, String> 
 // ============================================================================
 // General Settings Commands
 // ============================================================================
-
-#[tauri::command]
-#[specta::specta]
-pub fn change_ptt_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.push_to_talk = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
 
 #[tauri::command]
 #[specta::specta]

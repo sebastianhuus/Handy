@@ -30,8 +30,10 @@ interface SettingsStore {
   refreshSettings: () => Promise<void>;
   refreshAudioDevices: () => Promise<void>;
   refreshOutputDevices: () => Promise<void>;
-  updateBinding: (id: string, binding: string) => Promise<void>;
+  addBinding: (id: string, binding: string) => Promise<void>;
+  removeBinding: (id: string, binding: string) => Promise<void>;
   resetBinding: (id: string) => Promise<void>;
+  clearBinding: (id: string) => Promise<void>;
   getSetting: <K extends keyof Settings>(key: K) => Settings[K] | undefined;
   isUpdatingKey: (key: string) => boolean;
   playTestSound: (soundType: "start" | "stop") => Promise<void>;
@@ -88,7 +90,6 @@ const settingUpdaters: {
     commands.changeAutostartSetting(value as boolean),
   update_checks_enabled: (value) =>
     commands.changeUpdateChecksSetting(value as boolean),
-  push_to_talk: (value) => commands.changePttSetting(value as boolean),
   selected_microphone: (value) =>
     commands.setSelectedMicrophone(
       (value as string) === "Default" || value === null
@@ -312,64 +313,44 @@ export const useSettingsStore = create<SettingsStore>()(
       }
     },
 
-    // Update a specific binding
-    updateBinding: async (id, binding) => {
-      const { settings, setUpdating } = get();
+    // Append a hotkey to a binding's list
+    addBinding: async (id, binding) => {
+      const { setUpdating, refreshSettings } = get();
       const updateKey = `binding_${id}`;
-      const originalBinding = settings?.bindings?.[id]?.current_binding;
-
       setUpdating(updateKey, true);
-
       try {
-        // Optimistic update
-        set((state) => ({
-          settings: state.settings
-            ? {
-                ...state.settings,
-                bindings: {
-                  ...state.settings.bindings,
-                  [id]: {
-                    ...state.settings.bindings[id]!,
-                    current_binding: binding,
-                  },
-                },
-              }
-            : null,
-        }));
-
-        const result = await commands.changeBinding(id, binding);
-
-        // Check if the command executed successfully
+        const result = await commands.addBinding(id, binding);
         if (result.status === "error") {
           throw new Error(result.error);
         }
-
-        // Check if the binding change was successful
         if (!result.data.success) {
-          throw new Error(result.data.error || "Failed to update binding");
+          throw new Error(result.data.error || "Failed to add binding");
         }
+        await refreshSettings();
       } catch (error) {
-        console.error(`Failed to update binding ${id}:`, error);
+        console.error(`Failed to add binding ${id}:`, error);
+        throw error;
+      } finally {
+        setUpdating(updateKey, false);
+      }
+    },
 
-        // Rollback on error
-        if (originalBinding && get().settings) {
-          set((state) => ({
-            settings: state.settings
-              ? {
-                  ...state.settings,
-                  bindings: {
-                    ...state.settings.bindings,
-                    [id]: {
-                      ...state.settings.bindings[id]!,
-                      current_binding: originalBinding,
-                    },
-                  },
-                }
-              : null,
-          }));
+    // Remove a single hotkey from a binding's list
+    removeBinding: async (id, binding) => {
+      const { setUpdating, refreshSettings } = get();
+      const updateKey = `binding_${id}`;
+      setUpdating(updateKey, true);
+      try {
+        const result = await commands.removeBinding(id, binding);
+        if (result.status === "error") {
+          throw new Error(result.error);
         }
-
-        // Re-throw to let the caller know it failed
+        if (!result.data.success) {
+          throw new Error(result.data.error || "Failed to remove binding");
+        }
+        await refreshSettings();
+      } catch (error) {
+        console.error(`Failed to remove binding ${id}:`, error);
         throw error;
       } finally {
         setUpdating(updateKey, false);
@@ -388,6 +369,22 @@ export const useSettingsStore = create<SettingsStore>()(
         await refreshSettings();
       } catch (error) {
         console.error(`Failed to reset binding ${id}:`, error);
+      } finally {
+        setUpdating(updateKey, false);
+      }
+    },
+
+    clearBinding: async (id) => {
+      const { setUpdating, refreshSettings } = get();
+      const updateKey = `binding_${id}`;
+
+      setUpdating(updateKey, true);
+
+      try {
+        await commands.clearBinding(id);
+        await refreshSettings();
+      } catch (error) {
+        console.error(`Failed to clear binding ${id}:`, error);
       } finally {
         setUpdating(updateKey, false);
       }

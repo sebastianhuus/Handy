@@ -163,6 +163,9 @@
         "loading": "Loading shortcuts...",
         "none": "No shortcuts configured",
         "notFound": "Shortcut not found",
+        "notSet": "No hotkey",
+        "add": "+ Add",
+        "remove": "Remove",
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
@@ -176,12 +179,17 @@
           "transcribe_with_post_process": {
             "name": "Post-Processing Hotkey",
             "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+          },
+          "transcribe_with_push_to_talk": {
+            "name": "Push-to-Talk Shortcut",
+            "description": "Hold to record, release to transcribe. Optional: leave unset to use toggle mode only."
           }
         },
         "errors": {
           "restore": "Failed to restore original shortcut",
           "set": "Failed to set shortcut: {{error}}",
-          "reset": "Failed to reset shortcut to original value"
+          "reset": "Failed to reset shortcut to original value",
+          "duplicate": "{{shortcut}} is already assigned to {{name}}"
         }
       },
       "language": {
@@ -191,10 +199,6 @@
         "searchPlaceholder": "Search languages...",
         "noResults": "No languages found",
         "auto": "Auto"
-      },
-      "pushToTalk": {
-        "label": "Push To Talk",
-        "description": "Hold to record, release to stop"
       }
     },
     "models": {
