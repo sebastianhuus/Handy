@@ -323,19 +323,24 @@ impl HandyKeysState {
 
     /// Register every hotkey in a binding.
     pub fn register(&self, binding: &ShortcutBinding) -> Result<(), String> {
+        let mut any_succeeded = false;
         let mut last_err: Option<String> = None;
         for hk in &binding.current_bindings {
-            if let Err(e) = self.register_hotkey(&binding.id, hk) {
-                error!(
-                    "handy-keys register: failed for binding {} ({}): {}",
-                    binding.id, hk, e
-                );
-                last_err = Some(e);
+            match self.register_hotkey(&binding.id, hk) {
+                Ok(()) => any_succeeded = true,
+                Err(e) => {
+                    error!(
+                        "handy-keys register: failed for binding {} ({}): {}",
+                        binding.id, hk, e
+                    );
+                    last_err = Some(e);
+                }
             }
         }
-        match last_err {
-            Some(e) if binding.current_bindings.len() == 1 => Err(e),
-            _ => Ok(()),
+        if any_succeeded {
+            Ok(())
+        } else {
+            last_err.map_or(Ok(()), Err)
         }
     }
 

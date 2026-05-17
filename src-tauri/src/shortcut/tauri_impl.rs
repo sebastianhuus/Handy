@@ -160,19 +160,24 @@ pub fn unregister_hotkey(app: &AppHandle, hotkey_string: &str) -> Result<(), Str
 /// Returns Ok if at least one hotkey registered (or there were none); errors
 /// from individual hotkeys are logged but do not abort the rest.
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
+    let mut any_succeeded = false;
     let mut last_err: Option<String> = None;
     for hk in &binding.current_bindings {
-        if let Err(e) = register_hotkey(app, &binding.id, hk) {
-            warn!(
-                "register_shortcut: failed to register '{}' on binding '{}': {}",
-                hk, binding.id, e
-            );
-            last_err = Some(e);
+        match register_hotkey(app, &binding.id, hk) {
+            Ok(()) => any_succeeded = true,
+            Err(e) => {
+                warn!(
+                    "register_shortcut: failed to register '{}' on binding '{}': {}",
+                    hk, binding.id, e
+                );
+                last_err = Some(e);
+            }
         }
     }
-    match last_err {
-        Some(e) if binding.current_bindings.len() == 1 => Err(e),
-        _ => Ok(()),
+    if any_succeeded {
+        Ok(())
+    } else {
+        last_err.map_or(Ok(()), Err)
     }
 }
 
