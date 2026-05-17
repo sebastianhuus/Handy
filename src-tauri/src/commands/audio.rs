@@ -310,3 +310,15 @@ pub fn is_recording(app: AppHandle) -> bool {
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     audio_manager.is_recording()
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_noise_suppression(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = get_settings(&app);
+    settings.noise_suppression = enabled;
+    write_settings(&app, settings);
+
+    let rm = app.state::<Arc<AudioRecordingManager>>();
+    rm.update_recorder()
+        .map_err(|e| format!("Failed to restart recorder: {e}"))
+}

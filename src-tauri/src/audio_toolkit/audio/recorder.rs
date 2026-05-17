@@ -13,7 +13,7 @@ use cpal::{
 };
 
 use crate::audio_toolkit::{
-    audio::{AudioVisualiser, FrameResampler},
+    audio::{AudioVisualiser, FrameResampler, NoiseSuppressor},
     constants,
     vad::{self, VadFrame},
     VoiceActivityDetector,
@@ -36,6 +36,7 @@ pub struct AudioRecorder {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    noise_suppression: bool,
 }
 
 impl AudioRecorder {
@@ -46,7 +47,13 @@ impl AudioRecorder {
             worker_handle: None,
             vad: None,
             level_cb: None,
+            noise_suppression: false,
         })
+    }
+
+    pub fn with_noise_suppression(mut self, enabled: bool) -> Self {
+        self.noise_suppression = enabled;
+        self
     }
 
     pub fn with_vad(mut self, vad: Box<dyn VoiceActivityDetector>) -> Self {
@@ -81,8 +88,8 @@ impl AudioRecorder {
 
         let thread_device = device.clone();
         let vad = self.vad.clone();
-        // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
+        let noise_suppression = self.noise_suppression;
 
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
@@ -159,7 +166,7 @@ impl AudioRecorder {
                 Ok((stream, sample_rate)) => {
                     let _ = init_tx.send(Ok(()));
                     // Keep the stream alive while we process samples.
-                    run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb, stop_flag);
+                    run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb, stop_flag, noise_suppression);
                     drop(stream);
                 }
                 Err(error_message) => {
@@ -399,9 +406,22 @@ fn run_consumer(
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     stop_flag: Arc<AtomicBool>,
+    noise_suppression: bool,
 ) {
+    let mut noise_suppressor: Option<NoiseSuppressor> = if noise_suppression {
+        log::info!("Noise suppression enabled");
+        Some(NoiseSuppressor::new(in_sample_rate as usize))
+    } else {
+        None
+    };
+
+    let downstream_rate = noise_suppressor
+        .as_ref()
+        .map(|_| NoiseSuppressor::output_rate())
+        .unwrap_or(in_sample_rate as usize);
+
     let mut frame_resampler = FrameResampler::new(
-        in_sample_rate as usize,
+        downstream_rate,
         constants::WHISPER_SAMPLE_RATE as usize,
         Duration::from_millis(30),
     );
@@ -459,10 +479,18 @@ fn run_consumer(
             }
         }
 
-        // ---------- existing pipeline ------------------------------------ //
-        frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            handle_frame(frame, recording, &vad, &mut processed_samples)
-        });
+        // ---------- denoising + resampling pipeline ---------------------- //
+        if let Some(ns) = &mut noise_suppressor {
+            ns.push(&raw, &mut |denoised: &[f32]| {
+                frame_resampler.push(denoised, &mut |frame: &[f32]| {
+                    handle_frame(frame, recording, &vad, &mut processed_samples)
+                });
+            });
+        } else {
+            frame_resampler.push(&raw, &mut |frame: &[f32]| {
+                handle_frame(frame, recording, &vad, &mut processed_samples)
+            });
+        }
 
         // non-blocking check for a command
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -487,9 +515,17 @@ fn run_consumer(
                     loop {
                         match sample_rx.recv_timeout(Duration::from_secs(2)) {
                             Ok(AudioChunk::Samples(remaining)) => {
-                                frame_resampler.push(&remaining, &mut |frame: &[f32]| {
-                                    handle_frame(frame, true, &vad, &mut processed_samples)
-                                });
+                                if let Some(ns) = &mut noise_suppressor {
+                                    ns.push(&remaining, &mut |denoised: &[f32]| {
+                                        frame_resampler.push(denoised, &mut |frame: &[f32]| {
+                                            handle_frame(frame, true, &vad, &mut processed_samples)
+                                        });
+                                    });
+                                } else {
+                                    frame_resampler.push(&remaining, &mut |frame: &[f32]| {
+                                        handle_frame(frame, true, &vad, &mut processed_samples)
+                                    });
+                                }
                             }
                             Ok(AudioChunk::EndOfStream) => break,
                             Err(_) => {
@@ -499,6 +535,13 @@ fn run_consumer(
                         }
                     }
 
+                    if let Some(ns) = &mut noise_suppressor {
+                        ns.finish(&mut |denoised: &[f32]| {
+                            frame_resampler.push(denoised, &mut |frame: &[f32]| {
+                                handle_frame(frame, true, &vad, &mut processed_samples)
+                            });
+                        });
+                    }
                     frame_resampler.finish(&mut |frame: &[f32]| {
                         handle_frame(frame, true, &vad, &mut processed_samples)
                     });

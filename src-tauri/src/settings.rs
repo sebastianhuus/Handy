@@ -466,6 +466,8 @@ pub struct AppSettings {
     pub whisper_gpu_device: i32,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
+    #[serde(default)]
+    pub noise_suppression: bool,
 }
 
 fn default_model() -> String {
@@ -859,6 +861,7 @@ pub fn get_default_settings() -> AppSettings {
         ort_accelerator: OrtAcceleratorSetting::default(),
         whisper_gpu_device: default_whisper_gpu_device(),
         extra_recording_buffer_ms: 0,
+        noise_suppression: false,
     }
 }
 

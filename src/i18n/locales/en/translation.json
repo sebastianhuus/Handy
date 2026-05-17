@@ -240,6 +240,10 @@
       "volume": {
         "title": "Volume",
         "description": "Adjust the volume of audio feedback sounds"
+      },
+      "noiseSuppression": {
+        "label": "Noise Suppression",
+        "description": "Apply RNNoise to reduce background noise before transcription"
       }
     },
     "advanced": {

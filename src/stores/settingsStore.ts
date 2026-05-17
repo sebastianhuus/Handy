@@ -156,6 +156,8 @@ const settingUpdaters: {
     commands.changeWhisperGpuDevice(value as number),
   extra_recording_buffer_ms: (value) =>
     commands.changeExtraRecordingBufferSetting(value as number),
+  noise_suppression: (value) =>
+    commands.setNoiseSuppression(value as boolean),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

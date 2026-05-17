@@ -127,6 +127,7 @@ fn create_audio_recorder(
 
     // Recorder with VAD plus a spectrum-level callback that forwards updates to
     // the frontend.
+    let settings = crate::settings::get_settings(app_handle);
     let recorder = AudioRecorder::new()
         .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
         .with_vad(Box::new(smoothed_vad))
@@ -135,7 +136,8 @@ fn create_audio_recorder(
             move |levels| {
                 utils::emit_levels(&app_handle, &levels);
             }
-        });
+        })
+        .with_noise_suppression(settings.noise_suppression);
 
     Ok(recorder)
 }
@@ -419,6 +421,21 @@ impl AudioRecordingManager {
         if *self.is_open.lock().unwrap() {
             self.close_generation.fetch_add(1, Ordering::SeqCst);
             self.stop_microphone_stream();
+            self.start_microphone_stream()?;
+        }
+        Ok(())
+    }
+
+    /// Drop and recreate the recorder so settings baked in at construction
+    /// time (e.g. noise_suppression) take effect on the next open.
+    pub fn update_recorder(&self) -> Result<(), anyhow::Error> {
+        let was_open = *self.is_open.lock().unwrap();
+        if was_open {
+            self.close_generation.fetch_add(1, Ordering::SeqCst);
+            self.stop_microphone_stream();
+        }
+        *self.recorder.lock().unwrap() = None;
+        if was_open {
             self.start_microphone_stream()?;
         }
         Ok(())
