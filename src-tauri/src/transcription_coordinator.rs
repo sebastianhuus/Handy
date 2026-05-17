@@ -9,6 +9,13 @@ use tauri::{AppHandle, Manager};
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
 
+/// Minimum time a recording must run before stop is honored. Without this,
+/// spamming a transcription hotkey starts and tears down CPAL mic streams
+/// faster than the audio pipeline can handle, which has crashed the app.
+/// Stops that arrive earlier block the coordinator thread for the remainder
+/// of the window — subsequent events queue up and are processed afterwards.
+const MIN_RECORDING_DURATION: Duration = Duration::from_millis(150);
+
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
     Input {
@@ -28,11 +35,17 @@ enum Stage {
     Idle,
     /// PTT recording: stops when the same PTT key is released.
     /// The stored binding_id is also what the audio manager started under.
-    Recording(String),
+    Recording {
+        binding_id: String,
+        started_at: Instant,
+    },
     /// Toggle recording: stops on the next press of any transcription key.
     /// The stored binding_id is what the audio manager started under (may differ
     /// from the key the user pressed to start, e.g. after a PTT→toggle upgrade).
-    RecordingToggle(String),
+    RecordingToggle {
+        binding_id: String,
+        started_at: Instant,
+    },
     Processing,
 }
 
@@ -83,17 +96,23 @@ impl TranscriptionCoordinator {
                                         }
                                         // PTT pressed while a toggle (or upgraded PTT) recording is
                                         // active → stop that recording (cross-binding stop).
-                                        Stage::RecordingToggle(active_id) => {
+                                        Stage::RecordingToggle { binding_id: active_id, started_at } => {
                                             let active = active_id.clone();
+                                            let started_at = *started_at;
+                                            enforce_min_duration(started_at);
                                             stop(&app, &mut stage, &active, &hotkey_string);
                                         }
                                         _ => {
                                             debug!("Ignoring PTT press for '{binding_id}'");
                                         }
                                     }
-                                } else if matches!(&stage, Stage::Recording(id) if id == &binding_id) {
+                                } else if let Stage::Recording { binding_id: id, started_at } = &stage {
                                     // Key-up only stops PTT mode; RecordingToggle ignores key-up.
-                                    stop(&app, &mut stage, &binding_id, &hotkey_string);
+                                    if id == &binding_id {
+                                        let started_at = *started_at;
+                                        enforce_min_duration(started_at);
+                                        stop(&app, &mut stage, &binding_id, &hotkey_string);
+                                    }
                                 }
                             } else if is_pressed {
                                 match &stage {
@@ -104,17 +123,22 @@ impl TranscriptionCoordinator {
                                     // order-independent, so pressing the keys in either order fires
                                     // the longer combo. Upgrade to toggle mode without restarting
                                     // audio — the audio manager keeps the PTT binding_id.
-                                    Stage::Recording(ptt_id) => {
+                                    Stage::Recording { binding_id: ptt_id, started_at } => {
                                         let ptt = ptt_id.clone();
+                                        let started_at = *started_at;
                                         debug!("PTT '{ptt}' upgraded to toggle mode by '{binding_id}'");
-                                        stage = Stage::RecordingToggle(ptt);
+                                        stage = Stage::RecordingToggle { binding_id: ptt, started_at };
                                     }
-                                    Stage::RecordingToggle(active_id) if active_id == &binding_id => {
+                                    Stage::RecordingToggle { binding_id: active_id, started_at } if active_id == &binding_id => {
+                                        let started_at = *started_at;
+                                        enforce_min_duration(started_at);
                                         stop(&app, &mut stage, &binding_id, &hotkey_string);
                                     }
                                     // Different toggle binding pressed while recording → cross-binding stop.
-                                    Stage::RecordingToggle(active_id) => {
+                                    Stage::RecordingToggle { binding_id: active_id, started_at } => {
                                         let active = active_id.clone();
+                                        let started_at = *started_at;
+                                        enforce_min_duration(started_at);
                                         stop(&app, &mut stage, &active, &hotkey_string);
                                     }
                                     _ => {
@@ -131,7 +155,7 @@ impl TranscriptionCoordinator {
                                 && (recording_was_active
                                     || matches!(
                                         stage,
-                                        Stage::Recording(_) | Stage::RecordingToggle(_)
+                                        Stage::Recording { .. } | Stage::RecordingToggle { .. }
                                     ))
                             {
                                 stage = Stage::Idle;
@@ -242,13 +266,28 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         .try_state::<Arc<AudioRecordingManager>>()
         .map_or(false, |a| a.is_recording())
     {
+        let started_at = Instant::now();
+        let binding_id = binding_id.to_string();
         *stage = if is_ptt {
-            Stage::Recording(binding_id.to_string())
+            Stage::Recording { binding_id, started_at }
         } else {
-            Stage::RecordingToggle(binding_id.to_string())
+            Stage::RecordingToggle { binding_id, started_at }
         };
     } else {
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
+    }
+}
+
+/// Block the coordinator thread until the active recording has run for at
+/// least `MIN_RECORDING_DURATION`. Subsequent key events queue in the mpsc
+/// channel and are processed after the sleep; most will be dropped because
+/// the stage transitions to `Processing` immediately after.
+fn enforce_min_duration(started_at: Instant) {
+    let elapsed = started_at.elapsed();
+    if elapsed < MIN_RECORDING_DURATION {
+        let remaining = MIN_RECORDING_DURATION - elapsed;
+        debug!("Recording too short ({elapsed:?}); waiting {remaining:?} before stop");
+        thread::sleep(remaining);
     }
 }
 
