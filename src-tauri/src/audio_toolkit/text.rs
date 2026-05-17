@@ -231,8 +231,20 @@ fn get_filler_words_for_language(lang: &str) -> &'static [&'static str] {
 
 static MULTI_SPACE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s{2,}").unwrap());
 
-/// Collapses repeated words (3+ repetitions) to a single instance.
-/// E.g., "wh wh wh wh" -> "wh", "I I I I" -> "I"
+/// Returns true if the word is a short consonant-only cluster (no vowels, ≤3 chars)
+/// that looks like a speech stutter fragment (e.g., "s", "wh", "th").
+/// Words with vowels — including common short words like "I", "a", "in", "so" — return false.
+fn is_consonant_fragment(word: &str) -> bool {
+    !word.is_empty()
+        && word.len() <= 3
+        && word.chars().all(|c| c.is_alphabetic())
+        && !word.chars().any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u'))
+}
+
+/// Collapses repeated words (3+ repetitions) to a single instance, and removes
+/// consonant-only stutter fragments that precede the word being attempted.
+/// E.g., "wh wh wh wh" -> "wh", "I I I I" -> "I",
+///       "s so" -> "so", "wh wh when" -> "when"
 fn collapse_stutters(text: &str) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.is_empty() {
@@ -246,25 +258,51 @@ fn collapse_stutters(text: &str) -> String {
         let word = words[i];
         let word_lower = word.to_lowercase();
 
-        if word_lower.chars().all(|c| c.is_alphabetic()) {
-            // Count consecutive repetitions (case-insensitive)
-            let mut count = 1;
-            while i + count < words.len() && words[i + count].to_lowercase() == word_lower {
-                count += 1;
-            }
-
-            // If 3+ repetitions, collapse to single instance
-            if count >= 3 {
-                result.push(word);
-                i += count;
-            } else {
-                result.push(word);
-                i += 1;
-            }
-        } else {
+        if !word_lower.chars().all(|c| c.is_alphabetic()) {
             result.push(word);
             i += 1;
+            continue;
         }
+
+        // Count consecutive identical repetitions (case-insensitive)
+        let mut count = 1;
+        while i + count < words.len() && words[i + count].to_lowercase() == word_lower {
+            count += 1;
+        }
+
+        let after = i + count; // index of first word after all identical repetitions
+
+        // 3+ identical repetitions: collapse to one instance.
+        // If the following word starts with this consonant fragment (e.g., "wh wh wh when"),
+        // emit the full word instead.
+        if count >= 3 {
+            if is_consonant_fragment(&word_lower) && after < words.len() {
+                let next_lower = words[after].to_lowercase();
+                if next_lower.starts_with(&word_lower) && next_lower.len() > word_lower.len() {
+                    result.push(words[after]);
+                    i = after + 1;
+                    continue;
+                }
+            }
+            result.push(word);
+            i += count;
+            continue;
+        }
+
+        // For consonant-only fragments with count < 3, check if the word following
+        // all repetitions is the full word being stuttered toward.
+        // e.g., "s so" → "so", "wh wh when" → "when"
+        if is_consonant_fragment(&word_lower) && after < words.len() {
+            let next_lower = words[after].to_lowercase();
+            if next_lower.starts_with(&word_lower) && next_lower.len() > word_lower.len() {
+                result.push(words[after]);
+                i = after + 1;
+                continue;
+            }
+        }
+
+        result.push(word);
+        i += 1;
     }
 
     result.join(" ")
@@ -412,9 +450,34 @@ mod tests {
 
     #[test]
     fn test_filter_stutter_collapse() {
+        // "w" is a fragment for "wh"; the 8× "wh"s are fragments for "why"
         let text = "w wh wh wh wh wh wh wh wh wh why";
         let result = filter_transcription_output(text, "en", &None);
-        assert_eq!(result, "w wh why");
+        assert_eq!(result, "wh why");
+    }
+
+    #[test]
+    fn test_filter_stutter_partial_then_full() {
+        // single consonant fragment before full word
+        let text = "s so I was thinking";
+        let result = filter_transcription_output(text, "en", &None);
+        assert_eq!(result, "so I was thinking");
+    }
+
+    #[test]
+    fn test_filter_stutter_two_fragments_then_full() {
+        // two identical fragments before full word
+        let text = "wh wh when";
+        let result = filter_transcription_output(text, "en", &None);
+        assert_eq!(result, "when");
+    }
+
+    #[test]
+    fn test_filter_stutter_fragment_preserves_real_short_words() {
+        // "so", "I", "a" have vowels and must not be treated as fragments
+        let text = "so I saw a dog";
+        let result = filter_transcription_output(text, "en", &None);
+        assert_eq!(result, "so I saw a dog");
     }
 
     #[test]
