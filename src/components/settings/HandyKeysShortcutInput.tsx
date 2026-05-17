@@ -45,6 +45,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   const recordingRef = useRef<HTMLDivElement | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
   const currentKeysRef = useRef<string>("");
+  const suspendedIdsRef = useRef<string[]>([]);
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
@@ -56,6 +57,10 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       unlistenRef.current = null;
     }
     await commands.stopHandyKeysRecording().catch(console.error);
+    suspendedIdsRef.current.forEach((id) =>
+      commands.resumeBinding(id).catch(console.error),
+    );
+    suspendedIdsRef.current = [];
     setIsRecording(false);
     setCurrentKeys("");
     currentKeysRef.current = "";
@@ -77,15 +82,33 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
             setCurrentKeys(hotkey_string);
           } else if (!is_key_down && currentKeysRef.current) {
             const keysToCommit = currentKeysRef.current;
-            try {
-              await addBinding(shortcutId, keysToCommit);
-            } catch (error) {
-              console.error("Failed to add binding:", error);
+
+            const conflict = Object.entries(bindings).find(
+              ([otherId, b]) =>
+                otherId !== shortcutId &&
+                b?.current_bindings.includes(keysToCommit),
+            );
+            if (conflict) {
               toast.error(
-                t("settings.general.shortcut.errors.set", {
-                  error: String(error),
+                t("settings.general.shortcut.errors.duplicate", {
+                  shortcut: formatKeyCombination(keysToCommit, osType),
+                  name: t(
+                    `settings.general.shortcut.bindings.${conflict[0]}.name`,
+                    conflict[1]?.name ?? conflict[0],
+                  ),
                 }),
               );
+            } else {
+              try {
+                await addBinding(shortcutId, keysToCommit);
+              } catch (error) {
+                console.error("Failed to add binding:", error);
+                toast.error(
+                  t("settings.general.shortcut.errors.set", {
+                    error: String(error),
+                  }),
+                );
+              }
             }
 
             if (unlistenRef.current) {
@@ -93,6 +116,10 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
               unlistenRef.current = null;
             }
             await commands.stopHandyKeysRecording().catch(console.error);
+            suspendedIdsRef.current.forEach((id) =>
+              commands.resumeBinding(id).catch(console.error),
+            );
+            suspendedIdsRef.current = [];
             setIsRecording(false);
             setCurrentKeys("");
             currentKeysRef.current = "";
@@ -130,6 +157,10 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
   const startRecording = async () => {
     if (isRecording) return;
+    // Suspend all bindings so nothing fires while recording a new hotkey
+    const ids = Object.keys(bindings);
+    suspendedIdsRef.current = ids;
+    await Promise.all(ids.map((id) => commands.suspendBinding(id).catch(console.error)));
     try {
       await commands.startHandyKeysRecording(shortcutId);
       setIsRecording(true);
@@ -137,6 +168,10 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       currentKeysRef.current = "";
     } catch (error) {
       console.error("Failed to start recording:", error);
+      suspendedIdsRef.current.forEach((id) =>
+        commands.resumeBinding(id).catch(console.error),
+      );
+      suspendedIdsRef.current = [];
       toast.error(
         t("settings.general.shortcut.errors.set", { error: String(error) }),
       );

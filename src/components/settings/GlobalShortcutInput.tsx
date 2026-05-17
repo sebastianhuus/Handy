@@ -40,6 +40,7 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   const [recordedKeys, setRecordedKeys] = useState<string[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const recordingRef = useRef<HTMLDivElement | null>(null);
+  const suspendedIdsRef = useRef<string[]>([]);
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
@@ -91,17 +92,36 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
         });
         const newShortcut = sortedKeys.join("+");
 
-        try {
-          await addBinding(shortcutId, newShortcut);
-        } catch (error) {
-          console.error("Failed to add binding:", error);
+        const conflict = Object.entries(bindings).find(
+          ([otherId, b]) =>
+            otherId !== shortcutId && b?.current_bindings.includes(newShortcut),
+        );
+        if (conflict) {
           toast.error(
-            t("settings.general.shortcut.errors.set", {
-              error: String(error),
+            t("settings.general.shortcut.errors.duplicate", {
+              shortcut: formatKeyCombination(newShortcut, osType),
+              name: t(
+                `settings.general.shortcut.bindings.${conflict[0]}.name`,
+                conflict[1]?.name ?? conflict[0],
+              ),
             }),
           );
+        } else {
+          try {
+            await addBinding(shortcutId, newShortcut);
+          } catch (error) {
+            console.error("Failed to add binding:", error);
+            toast.error(
+              t("settings.general.shortcut.errors.set", {
+                error: String(error),
+              }),
+            );
+          }
         }
-        commands.resumeBinding(shortcutId).catch(console.error);
+        suspendedIdsRef.current.forEach((id) =>
+          commands.resumeBinding(id).catch(console.error),
+        );
+        suspendedIdsRef.current = [];
         setIsRecording(false);
         setKeyPressed([]);
         setRecordedKeys([]);
@@ -114,7 +134,10 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
         recordingRef.current &&
         !recordingRef.current.contains(e.target as Node)
       ) {
-        commands.resumeBinding(shortcutId).catch(console.error);
+        suspendedIdsRef.current.forEach((id) =>
+          commands.resumeBinding(id).catch(console.error),
+        );
+        suspendedIdsRef.current = [];
         setIsRecording(false);
         setKeyPressed([]);
         setRecordedKeys([]);
@@ -142,8 +165,10 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
 
   const startRecording = async () => {
     if (isRecording) return;
-    // Suspend existing bindings so they don't fire while recording
-    await commands.suspendBinding(shortcutId).catch(console.error);
+    // Suspend all bindings so nothing fires while recording a new hotkey
+    const ids = Object.keys(bindings);
+    suspendedIdsRef.current = ids;
+    await Promise.all(ids.map((id) => commands.suspendBinding(id).catch(console.error)));
     setIsRecording(true);
     setKeyPressed([]);
     setRecordedKeys([]);
