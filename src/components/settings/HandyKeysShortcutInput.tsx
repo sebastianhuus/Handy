@@ -9,6 +9,7 @@ import { useSettings } from "../../hooks/useSettings";
 import { useOsType } from "../../hooks/useOsType";
 import { commands } from "@/bindings";
 import { toast } from "sonner";
+import { maybeWarnAboutGlobeKey } from "../../lib/utils/globeKeyWarning";
 
 interface HandyKeysShortcutInputProps {
   descriptionMode?: "inline" | "tooltip";
@@ -101,6 +102,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
             } else {
               try {
                 await addBinding(shortcutId, keysToCommit);
+                maybeWarnAboutGlobeKey(keysToCommit, t).catch(console.error);
               } catch (error) {
                 console.error("Failed to add binding:", error);
                 toast.error(

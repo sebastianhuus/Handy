@@ -190,6 +190,11 @@
           "set": "Failed to set shortcut: {{error}}",
           "reset": "Failed to reset shortcut to original value",
           "duplicate": "{{shortcut}} is already assigned to {{name}}"
+        },
+        "globeKeyWarning": {
+          "title": "macOS Globe key is bound to a system action",
+          "description": "Short Fn/Globe taps may trigger language switching, the emoji picker, or dictation. Set \"Press Globe key to\" to \"Do Nothing\" in System Settings → Keyboard.",
+          "action": "Open Keyboard Settings"
         }
       },
       "language": {

@@ -561,6 +561,30 @@ async initializeShortcuts() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Read the macOS "Press Globe key to" setting (AppleFnUsageType).
+ * Returns the integer value (0=Do Nothing, 1=Change Input Source,
+ * 2=Show Emoji & Symbols, 3=Start Dictation) or -1 if the key is
+ * unset / can't be read / on a non-macOS platform.
+ * 
+ * Used by the frontend to warn users when they bind the Fn key as a
+ * hotkey while macOS is configured to do something with it.
+ */
+async getGlobeKeySetting() : Promise<number> {
+    return await TAURI_INVOKE("get_globe_key_setting");
+},
+/**
+ * Open System Settings to the Keyboard pane so the user can change the
+ * "Press Globe key to" option. macOS only.
+ */
+async openKeyboardSettings() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_keyboard_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getAvailableModels() : Promise<Result<ModelInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_available_models") };

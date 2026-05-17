@@ -185,3 +185,53 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     log::info!("Shortcuts initialized successfully");
     Ok(())
 }
+
+/// Read the macOS "Press Globe key to" setting (AppleFnUsageType).
+/// Returns the integer value (0=Do Nothing, 1=Change Input Source,
+/// 2=Show Emoji & Symbols, 3=Start Dictation) or -1 if the key is
+/// unset / can't be read / on a non-macOS platform.
+///
+/// Used by the frontend to warn users when they bind the Fn key as a
+/// hotkey while macOS is configured to do something with it.
+#[specta::specta]
+#[tauri::command]
+pub fn get_globe_key_setting() -> i32 {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleFnUsageType"])
+            .output();
+        match output {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .parse::<i32>()
+                .unwrap_or(-1),
+            _ => -1,
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        -1
+    }
+}
+
+/// Open System Settings to the Keyboard pane so the user can change the
+/// "Press Globe key to" option. macOS only.
+#[specta::specta]
+#[tauri::command]
+pub fn open_keyboard_settings(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        app.opener()
+            .open_url(
+                "x-apple.systempreferences:com.apple.Keyboard-Settings.extension",
+                None::<String>,
+            )
+            .map_err(|e| format!("Failed to open Keyboard settings: {}", e))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Only supported on macOS".to_string())
+    }
+}

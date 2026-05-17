@@ -17,6 +17,7 @@ import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
+import { maybeWarnAboutGlobeKey } from "@/lib/utils/globeKeyWarning";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -45,6 +46,7 @@ function App() {
     (state) => state.refreshOutputDevices,
   );
   const hasCompletedPostOnboardingInit = useRef(false);
+  const hasCheckedGlobeKey = useRef(false);
 
   useEffect(() => {
     checkOnboardingStatus();
@@ -69,6 +71,25 @@ function App() {
       refreshOutputDevices();
     }
   }, [onboardingStep, refreshAudioDevices, refreshOutputDevices]);
+
+  // Once settings load post-onboarding, warn if any existing binding uses
+  // the Fn/Globe key while macOS still has a Globe-key action configured.
+  useEffect(() => {
+    if (
+      onboardingStep !== "done" ||
+      hasCheckedGlobeKey.current ||
+      !settings?.bindings
+    ) {
+      return;
+    }
+    hasCheckedGlobeKey.current = true;
+    const fnHotkey = Object.values(settings.bindings)
+      .flatMap((b) => b?.current_bindings ?? [])
+      .find((hk) => hk.split("+").some((k) => k.trim().toLowerCase() === "fn"));
+    if (fnHotkey) {
+      maybeWarnAboutGlobeKey(fnHotkey, t).catch(console.error);
+    }
+  }, [onboardingStep, settings?.bindings, t]);
 
   // Handle keyboard shortcuts for debug mode toggle
   useEffect(() => {
@@ -261,6 +282,8 @@ function App() {
               "bg-background border border-mid-gray/20 rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 text-sm",
             title: "font-medium",
             description: "text-mid-gray",
+            actionButton:
+              "ml-auto px-2.5 py-1 text-xs font-medium rounded-md border border-logo-primary text-logo-primary hover:bg-logo-primary/10 transition-colors",
           },
         }}
       />
