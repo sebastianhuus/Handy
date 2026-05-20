@@ -81,11 +81,10 @@ pub fn hotkey_contains_fn(hotkey_string: &str) -> bool {
 static ARMED: AtomicBool = AtomicBool::new(false);
 
 /// Snapshot the current input source and revert any change that happens
-/// within `REVERT_WINDOW`. Safe to call from any thread; the actual
-/// TIS calls run on the Tauri main thread because IMK requires a
-/// CFRunLoop and concurrent calls from raw worker threads produce
-/// "error messaging the mach port for IMKCFRunLoopWakeUpReliable"
-/// and eventually crash.
+/// within `REVERT_WINDOW`. Safe to call from any thread; all TIS calls
+/// are dispatched to the Tauri main thread because IMK requires a
+/// CFRunLoop and `TSMCurrentKeyboardInputSourceRefCreate` (called
+/// internally by TIS APIs) asserts it runs on the main queue.
 pub fn arm(app: &AppHandle) {
     if ARMED.swap(true, Ordering::AcqRel) {
         // A watcher is already running; it will catch any change that
@@ -93,34 +92,40 @@ pub fn arm(app: &AppHandle) {
         return;
     }
 
-    let Some(saved) = OwnedInputSource::from_raw(unsafe { TISCopyCurrentKeyboardInputSource() })
-    else {
-        ARMED.store(false, Ordering::Release);
-        return;
-    };
-
     let app = app.clone();
-    thread::spawn(move || {
-        thread::sleep(REVERT_WINDOW);
+    let _ = app.clone().run_on_main_thread(move || {
+        // Take the initial snapshot on the main thread — TIS APIs assert
+        // they're called from the main queue.
+        let Some(saved) =
+            OwnedInputSource::from_raw(unsafe { TISCopyCurrentKeyboardInputSource() })
+        else {
+            ARMED.store(false, Ordering::Release);
+            return;
+        };
 
-        let dispatched = app.run_on_main_thread(move || {
-            if let Some(current) =
-                OwnedInputSource::from_raw(unsafe { TISCopyCurrentKeyboardInputSource() })
-            {
-                let same = unsafe { CFEqual(saved.as_ptr(), current.as_ptr()) } != 0;
-                if !same {
-                    debug!("Reverting Globe-tap-induced input-source change");
-                    let _ = unsafe { TISSelectInputSource(saved.as_ptr()) };
+        let app = app.clone();
+        thread::spawn(move || {
+            thread::sleep(REVERT_WINDOW);
+
+            let dispatched = app.run_on_main_thread(move || {
+                if let Some(current) =
+                    OwnedInputSource::from_raw(unsafe { TISCopyCurrentKeyboardInputSource() })
+                {
+                    let same = unsafe { CFEqual(saved.as_ptr(), current.as_ptr()) } != 0;
+                    if !same {
+                        debug!("Reverting Globe-tap-induced input-source change");
+                        let _ = unsafe { TISSelectInputSource(saved.as_ptr()) };
+                    }
                 }
-            }
-            ARMED.store(false, Ordering::Release);
-        });
+                ARMED.store(false, Ordering::Release);
+            });
 
-        if dispatched.is_err() {
-            // Main thread is gone (e.g. app shutting down). Release the
-            // flag so we don't permanently block future arms — though
-            // at that point there won't be any.
-            ARMED.store(false, Ordering::Release);
-        }
+            if dispatched.is_err() {
+                // Main thread is gone (e.g. app shutting down). Release the
+                // flag so we don't permanently block future arms — though
+                // at that point there won't be any.
+                ARMED.store(false, Ordering::Release);
+            }
+        });
     });
 }
