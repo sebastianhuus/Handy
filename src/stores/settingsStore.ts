@@ -163,6 +163,8 @@ const settingUpdaters: {
     commands.setNoiseSuppression(value as boolean),
   keyword_actions_enabled: (value) =>
     commands.changeKeywordActionsEnabledSetting(value as boolean),
+  convert_number_words: (value) =>
+    commands.setConvertNumberWords(value as boolean),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

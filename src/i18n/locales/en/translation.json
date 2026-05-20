@@ -249,6 +249,10 @@
       "noiseSuppression": {
         "label": "Noise Suppression",
         "description": "Apply RNNoise to reduce background noise before transcription"
+      },
+      "convertNumberWords": {
+        "label": "Convert Number Words to Digits",
+        "description": "Automatically convert spoken numbers to digits (e.g. \"twenty three\" → \"23\", \"one hundred and fifty\" → \"150\")"
       }
     },
     "advanced": {
