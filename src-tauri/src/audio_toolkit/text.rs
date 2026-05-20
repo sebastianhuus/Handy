@@ -614,6 +614,119 @@ mod tests {
         assert!(result.contains("MacBook"));
     }
 
+    // -------------------------------------------------------------------------
+    // convert_number_words
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_number_basic_cardinals() {
+        assert_eq!(convert_number_words("twenty three items"), "23 items");
+        assert_eq!(convert_number_words("five"), "5");
+        assert_eq!(convert_number_words("zero"), "0");
+        assert_eq!(convert_number_words("nineteen"), "19");
+        assert_eq!(convert_number_words("ninety"), "90");
+    }
+
+    #[test]
+    fn test_number_hundreds() {
+        assert_eq!(convert_number_words("one hundred"), "100");
+        assert_eq!(convert_number_words("three hundred"), "300");
+        assert_eq!(convert_number_words("one hundred and twenty three"), "123");
+        assert_eq!(convert_number_words("two hundred and fifty"), "250");
+    }
+
+    #[test]
+    fn test_number_thousands_and_large() {
+        assert_eq!(convert_number_words("two thousand"), "2000");
+        assert_eq!(convert_number_words("twenty three thousand four hundred and fifty six"), "23456");
+        assert_eq!(convert_number_words("one million"), "1000000");
+        assert_eq!(convert_number_words("two hundred thousand"), "200000");
+    }
+
+    #[test]
+    fn test_number_decimals() {
+        assert_eq!(convert_number_words("three point five"), "3.5");
+        assert_eq!(convert_number_words("thirty two point seven five"), "32.75");
+        assert_eq!(convert_number_words("one point two three"), "1.23");
+        // "point" alone (no following digit) stays unconsumed
+        assert_eq!(convert_number_words("make a point about this"), "make a point about this");
+    }
+
+    #[test]
+    fn test_number_ordinals_in_sequence() {
+        assert_eq!(convert_number_words("twenty first floor"), "21st floor");
+        assert_eq!(convert_number_words("twenty second"), "22nd");
+        assert_eq!(convert_number_words("thirty third"), "33rd");
+        assert_eq!(convert_number_words("one hundredth"), "100th");
+    }
+
+    #[test]
+    fn test_number_standalone_ordinals_unchanged() {
+        // Standalone ordinals must not be converted — too ambiguous
+        assert_eq!(convert_number_words("give me a second"), "give me a second");
+        assert_eq!(convert_number_words("first and foremost"), "first and foremost");
+        assert_eq!(convert_number_words("the second opinion"), "the second opinion");
+    }
+
+    #[test]
+    fn test_number_negatives() {
+        assert_eq!(convert_number_words("negative twenty"), "-20");
+        assert_eq!(convert_number_words("minus five"), "-5");
+        assert_eq!(convert_number_words("minus one hundred"), "-100");
+        // "negative" with no following number → unchanged
+        assert_eq!(convert_number_words("negative"), "negative");
+    }
+
+    #[test]
+    fn test_number_a_before_scale() {
+        assert_eq!(convert_number_words("a hundred"), "100");
+        assert_eq!(convert_number_words("a thousand users"), "1000 users");
+        // "a" followed by a non-scale word → unchanged
+        assert_eq!(convert_number_words("a second"), "a second");
+    }
+
+    #[test]
+    fn test_number_punctuation_preserved() {
+        assert_eq!(convert_number_words("twenty,"), "20,");
+        assert_eq!(convert_number_words("five."), "5.");
+        assert_eq!(convert_number_words("(twenty three)"), "(23)");
+    }
+
+    #[test]
+    fn test_number_mixed_text() {
+        assert_eq!(
+            convert_number_words("I need twenty three items"),
+            "I need 23 items"
+        );
+        assert_eq!(
+            convert_number_words("page one hundred and fifty"),
+            "page 150"
+        );
+        assert_eq!(
+            convert_number_words("temperature is minus five degrees"),
+            "temperature is -5 degrees"
+        );
+    }
+
+    #[test]
+    fn test_number_trailing_and_not_consumed() {
+        // "one hundred and" — the trailing "and" should be left as-is
+        assert_eq!(convert_number_words("one hundred and then"), "100 and then");
+    }
+
+    #[test]
+    fn test_number_already_digits_unchanged() {
+        assert_eq!(convert_number_words("I have 3 items"), "I have 3 items");
+        assert_eq!(convert_number_words("version 1.5"), "version 1.5");
+    }
+
+    #[test]
+    fn test_number_bare_scales_unchanged() {
+        // "hundred" / "million" without a preceding number word — leave unchanged
+        assert_eq!(convert_number_words("hundred"), "hundred");
+        assert_eq!(convert_number_words("million dollar idea"), "million dollar idea");
+    }
+
     #[test]
     fn test_apply_custom_words_trailing_number_not_doubled() {
         // Verify that trailing non-alpha chars (like numbers) aren't double-counted
@@ -628,6 +741,363 @@ mod tests {
             result
         );
     }
+}
+
+// ==============================================================================
+// Number word → digit conversion
+// ==============================================================================
+
+/// Returns the ordinal suffix for a number (e.g. 1 → "st", 2 → "nd", 3 → "rd").
+fn ordinal_suffix_for(n: u64) -> &'static str {
+    match n % 100 {
+        11 | 12 | 13 => "th",
+        _ => match n % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        },
+    }
+}
+
+/// Strips leading and trailing non-alphanumeric characters from a word.
+fn word_core(word: &str) -> &str {
+    word.trim_matches(|c: char| !c.is_alphanumeric())
+}
+
+/// The numeric role a single (cleaned) word can play in a number phrase.
+#[derive(Clone, Copy)]
+enum NumWord {
+    /// 0–19  (zero, one, …, nineteen)
+    Ones(u64),
+    /// 20–90 in multiples of ten (twenty, thirty, …, ninety)
+    Tens(u64),
+    /// The word "hundred"
+    Hundred,
+    /// A large scale multiplier: thousand / million / billion
+    BigScale(u64),
+    /// "and" — ignored connector between digit groups
+    Connector,
+    /// "point" — decimal separator
+    Point,
+    /// An ordinal word (first=1, second=2, …, ninetieth=90).
+    /// Standalone ordinals are left unchanged; they are only converted when
+    /// they appear at the end of a multi-word number sequence.
+    Ordinal(u64),
+    /// A scale word that also implies an ordinal suffix (hundredth / thousandth).
+    /// Like Hundred / BigScale it multiplies or accumulates the running total,
+    /// but the result gets an ordinal suffix.  "one hundredth" → "100th".
+    ScaleOrdinal(u64),
+}
+
+/// Maps a lowercase word to its [`NumWord`] role, or `None` if it is not a
+/// recognised number word.
+fn classify_number_word(word: &str) -> Option<NumWord> {
+    Some(match word {
+        "zero"        => NumWord::Ones(0),
+        "one"         => NumWord::Ones(1),
+        "two"         => NumWord::Ones(2),
+        "three"       => NumWord::Ones(3),
+        "four"        => NumWord::Ones(4),
+        "five"        => NumWord::Ones(5),
+        "six"         => NumWord::Ones(6),
+        "seven"       => NumWord::Ones(7),
+        "eight"       => NumWord::Ones(8),
+        "nine"        => NumWord::Ones(9),
+        "ten"         => NumWord::Ones(10),
+        "eleven"      => NumWord::Ones(11),
+        "twelve"      => NumWord::Ones(12),
+        "thirteen"    => NumWord::Ones(13),
+        "fourteen"    => NumWord::Ones(14),
+        "fifteen"     => NumWord::Ones(15),
+        "sixteen"     => NumWord::Ones(16),
+        "seventeen"   => NumWord::Ones(17),
+        "eighteen"    => NumWord::Ones(18),
+        "nineteen"    => NumWord::Ones(19),
+        "twenty"      => NumWord::Tens(20),
+        "thirty"      => NumWord::Tens(30),
+        "forty"       => NumWord::Tens(40),
+        "fifty"       => NumWord::Tens(50),
+        "sixty"       => NumWord::Tens(60),
+        "seventy"     => NumWord::Tens(70),
+        "eighty"      => NumWord::Tens(80),
+        "ninety"      => NumWord::Tens(90),
+        "hundred"     => NumWord::Hundred,
+        "thousand"    => NumWord::BigScale(1_000),
+        "million"     => NumWord::BigScale(1_000_000),
+        "billion"     => NumWord::BigScale(1_000_000_000),
+        "and"         => NumWord::Connector,
+        "point"       => NumWord::Point,
+        // Ordinals — only valid at the tail of a multi-word number sequence
+        "first"       => NumWord::Ordinal(1),
+        "second"      => NumWord::Ordinal(2),
+        "third"       => NumWord::Ordinal(3),
+        "fourth"      => NumWord::Ordinal(4),
+        "fifth"       => NumWord::Ordinal(5),
+        "sixth"       => NumWord::Ordinal(6),
+        "seventh"     => NumWord::Ordinal(7),
+        "eighth"      => NumWord::Ordinal(8),
+        "ninth"       => NumWord::Ordinal(9),
+        "tenth"       => NumWord::Ordinal(10),
+        "eleventh"    => NumWord::Ordinal(11),
+        "twelfth"     => NumWord::Ordinal(12),
+        "thirteenth"  => NumWord::Ordinal(13),
+        "fourteenth"  => NumWord::Ordinal(14),
+        "fifteenth"   => NumWord::Ordinal(15),
+        "sixteenth"   => NumWord::Ordinal(16),
+        "seventeenth" => NumWord::Ordinal(17),
+        "eighteenth"  => NumWord::Ordinal(18),
+        "nineteenth"  => NumWord::Ordinal(19),
+        "twentieth"   => NumWord::Ordinal(20),
+        "thirtieth"   => NumWord::Ordinal(30),
+        "fortieth"    => NumWord::Ordinal(40),
+        "fiftieth"    => NumWord::Ordinal(50),
+        "sixtieth"    => NumWord::Ordinal(60),
+        "seventieth"  => NumWord::Ordinal(70),
+        "eightieth"   => NumWord::Ordinal(80),
+        "ninetieth"   => NumWord::Ordinal(90),
+        "hundredth"   => NumWord::ScaleOrdinal(100),
+        "thousandth"  => NumWord::ScaleOrdinal(1_000),
+        _ => return None,
+    })
+}
+
+/// Parses a run of number words beginning at `start`, returning
+/// `(value, is_ordinal, words_consumed)` or `None` if no number words are
+/// found.
+///
+/// Rules:
+/// - "and" is accepted as a connector *within* an established number run, but
+///   is rolled back if nothing follows it.
+/// - Ordinals (first, second …) are accepted only at the *end* of a run that
+///   already has at least one cardinal word — standalone ordinals are left
+///   unchanged because they are too context-dependent.
+/// - ScaleOrdinals (hundredth / thousandth) multiply the running value exactly
+///   like their cardinal cousins but also set the ordinal flag.
+/// - "a" is treated as 1 when immediately followed by "hundred", "thousand",
+///   "million", or "billion" (e.g. "a hundred" → 100).
+fn parse_integer_body(words: &[&str], start: usize) -> Option<(u64, bool, usize)> {
+    let mut total: u64 = 0;
+    let mut current: u64 = 0;
+    let mut count: usize = 0;
+    let mut is_ordinal = false;
+    let mut pending_connector = false;
+
+    // "a hundred / a thousand / …" — treat "a" as 1
+    if start < words.len() {
+        let wc = word_core(words[start]).to_lowercase();
+        if wc == "a" && start + 1 < words.len() {
+            let next_wc = word_core(words[start + 1]).to_lowercase();
+            if matches!(
+                classify_number_word(&next_wc),
+                Some(NumWord::Hundred) | Some(NumWord::BigScale(_))
+            ) {
+                current = 1;
+                count = 1;
+            }
+        }
+    }
+
+    loop {
+        let idx = start + count;
+        if idx >= words.len() {
+            break;
+        }
+        let wc = word_core(words[idx]).to_lowercase();
+
+        match classify_number_word(&wc) {
+            None => break,
+            Some(NumWord::Point) => break, // handled by caller
+            Some(NumWord::Connector) => {
+                if count == 0 {
+                    break; // "and" with nothing before it — not a number
+                }
+                pending_connector = true;
+                count += 1;
+            }
+            Some(NumWord::Ordinal(v)) => {
+                // Only accept ordinals at the end of an established run
+                if count == 0 {
+                    break;
+                }
+                current += v;
+                is_ordinal = true;
+                pending_connector = false;
+                count += 1;
+                break; // ordinal always ends the sequence
+            }
+            Some(NumWord::Ones(v) | NumWord::Tens(v)) => {
+                current += v;
+                pending_connector = false;
+                count += 1;
+            }
+            Some(NumWord::Hundred) => {
+                if count == 0 {
+                    break; // bare "hundred" — not a number
+                }
+                if current == 0 {
+                    current = 1;
+                }
+                current *= 100;
+                pending_connector = false;
+                count += 1;
+            }
+            Some(NumWord::BigScale(scale)) => {
+                if count == 0 {
+                    break; // bare "million" etc. — not a number
+                }
+                let mult = if current == 0 { 1 } else { current };
+                total += mult * scale;
+                current = 0;
+                pending_connector = false;
+                count += 1;
+            }
+            Some(NumWord::ScaleOrdinal(scale)) => {
+                // Like Hundred / BigScale but makes the result ordinal.
+                // "one hundredth" → current*=100 → 100th
+                // "two thousandth" → total += 2*1000 → 2000th
+                if count == 0 {
+                    break;
+                }
+                if scale == 100 {
+                    if current == 0 {
+                        current = 1;
+                    }
+                    current *= 100;
+                } else {
+                    let mult = if current == 0 { 1 } else { current };
+                    total += mult * scale;
+                    current = 0;
+                }
+                is_ordinal = true;
+                pending_connector = false;
+                count += 1;
+                break; // scale-ordinal always ends the sequence
+            }
+        }
+    }
+
+    // Roll back a trailing "and" that had nothing following it
+    if pending_connector && count > 0 {
+        count -= 1;
+    }
+
+    if count == 0 {
+        return None;
+    }
+
+    Some((total + current, is_ordinal, count))
+}
+
+/// Attempts to parse a number phrase starting at position `start` in `words`.
+///
+/// Returns `(converted_string, words_consumed)` or `None`.
+fn try_parse_number(words: &[&str], start: usize) -> Option<(String, usize)> {
+    let mut pos = start;
+
+    // Preserve any leading punctuation attached to the first word (e.g. "($twenty")
+    let (lead_punct, _) = extract_punctuation(words[pos]);
+
+    // Optional negative / minus prefix
+    let first_core = word_core(words[pos]).to_lowercase();
+    let negative = matches!(first_core.as_str(), "negative" | "minus");
+    if negative {
+        // Only treat as a prefix when a number word immediately follows
+        let next = pos + 1;
+        if next >= words.len() {
+            return None;
+        }
+        let next_lower = word_core(words[next]).to_lowercase();
+        if classify_number_word(&next_lower).is_none() {
+            return None;
+        }
+        pos += 1;
+    }
+
+    // Parse the integer body
+    let (int_val, is_ordinal, body_count) = parse_integer_body(words, pos)?;
+    pos += body_count;
+
+    // Optional decimal: "point" followed by single-digit number words
+    let mut decimal = String::new();
+    if !is_ordinal && pos < words.len() {
+        let pw = word_core(words[pos]).to_lowercase();
+        if pw == "point" {
+            let mut frac = String::new();
+            let mut fp = pos + 1;
+            while fp < words.len() {
+                let dw = word_core(words[fp]).to_lowercase();
+                match classify_number_word(&dw) {
+                    Some(NumWord::Ones(d)) if d <= 9 => {
+                        frac.push_str(&d.to_string());
+                        fp += 1;
+                    }
+                    _ => break,
+                }
+            }
+            if !frac.is_empty() {
+                decimal = frac;
+                pos = fp; // advance past "point" + digit words
+            }
+            // If no digit words follow "point", leave it unconsumed
+        }
+    }
+
+    let total_consumed = pos - start;
+    if total_consumed == 0 {
+        return None;
+    }
+
+    // Trailing punctuation from the last consumed word
+    let (_, trail_punct) = extract_punctuation(words[start + total_consumed - 1]);
+
+    let sign = if negative { "-" } else { "" };
+    let num = if !decimal.is_empty() {
+        format!("{}{}.{}", sign, int_val, decimal)
+    } else if is_ordinal {
+        let suf = ordinal_suffix_for(int_val);
+        format!("{}{}{}", sign, int_val, suf)
+    } else {
+        format!("{}{}", sign, int_val)
+    };
+
+    Some((format!("{}{}{}", lead_punct, num, trail_punct), total_consumed))
+}
+
+/// Post-processing pass that converts spoken number words to digit form.
+///
+/// Examples (non-exhaustive):
+/// - `"twenty three items"` → `"23 items"`
+/// - `"one hundred and fifty dollars"` → `"150 dollars"`
+/// - `"three point five"` → `"3.5"`
+/// - `"twenty first floor"` → `"21st floor"`
+/// - `"negative twenty"` → `"-20"`
+/// - `"a thousand users"` → `"1000 users"`
+///
+/// Standalone ordinals (first, second, third …) are intentionally left
+/// unchanged — they are too context-dependent to convert safely
+/// ("give me a second", "second opinion").
+/// Hyphenated forms ("twenty-three") are not currently handled.
+pub fn convert_number_words(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return text.to_string();
+    }
+
+    let mut result: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < words.len() {
+        if let Some((num_str, consumed)) = try_parse_number(&words, i) {
+            result.push(num_str);
+            i += consumed;
+        } else {
+            result.push(words[i].to_string());
+            i += 1;
+        }
+    }
+
+    result.join(" ")
 }
 
 /// Applies exact correction pairs to transcribed text.

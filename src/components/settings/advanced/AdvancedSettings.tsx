@@ -22,6 +22,7 @@ import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationS
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
 import { KeywordActions } from "../KeywordActions";
+import { NumberWordConversion } from "../NumberWordConversion";
 
 export const AdvancedSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -50,6 +51,7 @@ export const AdvancedSettings: React.FC = () => {
         <CustomWords descriptionMode="tooltip" grouped />
         <CorrectionPairs descriptionMode="tooltip" grouped />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
+        <NumberWordConversion descriptionMode="tooltip" grouped={true} />
         <KeywordActions descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

@@ -478,6 +478,8 @@ pub struct AppSettings {
     pub noise_suppression: bool,
     #[serde(default)]
     pub keyword_actions_enabled: bool,
+    #[serde(default)]
+    pub convert_number_words: bool,
 }
 
 fn default_model() -> String {
@@ -874,6 +876,7 @@ pub fn get_default_settings() -> AppSettings {
         extra_recording_buffer_ms: 0,
         noise_suppression: false,
         keyword_actions_enabled: false,
+        convert_number_words: false,
     }
 }
 
