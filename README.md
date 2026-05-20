@@ -1,4 +1,22 @@
-# Handy
+# Handy - FORK
+
+## What's in this fork!?
+
+THANK YOU to cjpais for the most forkable dictation app!!! I made some additions I was missing from Wispr Flow, trying to break free from the cloud :)
+
+- Numbers are converted (e.g "one thousand" becomes "1000")
+- Spelling correction (key value pairs) for the STT; "sim link" would be corrected to "symlink" if that is what you are trying to say.
+- Better compatability with fn keys on MacOS
+- Separate Toggle + Push to Talk keybinds
+- Push can be upgraded to Toggle mid dictation if you say more than planned
+- "Keyword Actions"; currently you can say "Press enter" which will input a return signal, eg to send a chat message. Might extend this
+- RRNoise suppression based on some smart comments in the [Handy Discord server](https://discord.com/invite/WVBeWsNXK4)
+- Basic stutter-correction s s so my speech doesn't get literally transcribed
+- Support for multiple key binds per shortcut (e.g. BOTH Right CTRL and FN key can be used to start dictation)
+
+---
+
+# Original readme:
 
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/WVBeWsNXK4)
 
