@@ -16,7 +16,7 @@ const FRAME_SIZE: usize = DenoiseState::FRAME_SIZE; // 480 samples = 10 ms at 48
 ///
 /// Before each frame reaches RNNoise, a pre-EQ chain removes low-frequency
 /// content that impairs speech recognition:
-///   80 Hz HPF → room cut (165 Hz) → mud cut (285 Hz) → box cut (720 Hz)
+///   80 Hz HPF → plosive shelf (105 Hz) → room cut (165 Hz) → mud cut (285 Hz) → box cut (720 Hz)
 /// Coefficients ported from BroadcastVoiceDSP (Swift reference implementation).
 pub struct NoiseSuppressor {
     resampler: FrameResampler,
@@ -24,6 +24,7 @@ pub struct NoiseSuppressor {
     output: [f32; FRAME_SIZE],
     first_frame: bool,
     hpf: Biquad,
+    plosive_shelf: Biquad,
     eq: [Biquad; 3],
     frame_buf: [f32; FRAME_SIZE],
 }
@@ -37,6 +38,7 @@ impl NoiseSuppressor {
             output: [0.0; FRAME_SIZE],
             first_frame: true,
             hpf: Biquad::new_highpass(80.0, sr, 0.707),
+            plosive_shelf: Biquad::new_low_shelf(105.0, sr, -4.0, 0.75),
             eq: [
                 Biquad::new_peaking(165.0, sr, 0.82, -4.0), // room cut
                 Biquad::new_peaking(285.0, sr, 1.00, -3.0), // mud cut
@@ -51,12 +53,14 @@ impl NoiseSuppressor {
         let output = &mut self.output;
         let first_frame = &mut self.first_frame;
         let hpf = &mut self.hpf;
+        let plosive_shelf = &mut self.plosive_shelf;
         let eq = &mut self.eq;
         let frame_buf = &mut self.frame_buf;
         self.resampler.push(samples, |frame: &[f32]| {
             let len = frame.len().min(FRAME_SIZE);
             frame_buf[..len].copy_from_slice(&frame[..len]);
             hpf.process_buffer(&mut frame_buf[..len]);
+            plosive_shelf.process_buffer(&mut frame_buf[..len]);
             for bq in eq.iter_mut() {
                 bq.process_buffer(&mut frame_buf[..len]);
             }
@@ -69,12 +73,14 @@ impl NoiseSuppressor {
         let output = &mut self.output;
         let first_frame = &mut self.first_frame;
         let hpf = &mut self.hpf;
+        let plosive_shelf = &mut self.plosive_shelf;
         let eq = &mut self.eq;
         let frame_buf = &mut self.frame_buf;
         self.resampler.finish(|frame: &[f32]| {
             let len = frame.len().min(FRAME_SIZE);
             frame_buf[..len].copy_from_slice(&frame[..len]);
             hpf.process_buffer(&mut frame_buf[..len]);
+            plosive_shelf.process_buffer(&mut frame_buf[..len]);
             for bq in eq.iter_mut() {
                 bq.process_buffer(&mut frame_buf[..len]);
             }

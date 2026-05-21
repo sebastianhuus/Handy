@@ -67,6 +67,31 @@ impl Biquad {
         )
     }
 
+    /// Low-shelf EQ. `slope` controls the transition steepness (1.0 = standard, 0.75 = gentle).
+    /// Returns bypass when |gain_db| < 0.001.
+    pub fn new_low_shelf(freq_hz: f32, sample_rate: f32, gain_db: f32, slope: f32) -> Self {
+        if gain_db.abs() < 0.001 {
+            return Self::bypass();
+        }
+        let f = freq_hz.clamp(10.0, sample_rate * 0.45);
+        let s = slope.max(0.05);
+        let omega = TAU * f / sample_rate;
+        let sn = omega.sin();
+        let cs = omega.cos();
+        let a = 10.0_f32.powf(gain_db / 40.0);
+        let sqrt_a = a.sqrt();
+        let radicand = ((a + 1.0 / a) * (1.0 / s - 1.0) + 2.0).max(1e-6);
+        let alpha = sn / 2.0 * radicand.sqrt();
+        Self::from_coeffs(
+            a * ((a + 1.0) - (a - 1.0) * cs + 2.0 * sqrt_a * alpha),
+            2.0 * a * ((a - 1.0) - (a + 1.0) * cs),
+            a * ((a + 1.0) - (a - 1.0) * cs - 2.0 * sqrt_a * alpha),
+            (a + 1.0) + (a - 1.0) * cs + 2.0 * sqrt_a * alpha,
+            -2.0 * ((a - 1.0) + (a + 1.0) * cs),
+            (a + 1.0) + (a - 1.0) * cs - 2.0 * sqrt_a * alpha,
+        )
+    }
+
     /// Peaking (bell) EQ. Returns bypass when |gain_db| < 0.001.
     pub fn new_peaking(freq_hz: f32, sample_rate: f32, q: f32, gain_db: f32) -> Self {
         if gain_db.abs() < 0.001 {
