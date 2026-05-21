@@ -1,4 +1,5 @@
 // Re-export all audio components
+mod biquad;
 mod device;
 mod noise;
 mod recorder;
