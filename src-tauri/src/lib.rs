@@ -88,6 +88,22 @@ fn build_console_filter() -> env_filter::Filter {
 
 fn show_main_window(app: &AppHandle) {
     if let Some(main_window) = app.get_webview_window("main") {
+        #[cfg(target_os = "macos")]
+        {
+            // Switch to Regular policy so the app gets a dock tile and can
+            // receive focus like a normal foreground app.
+            if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
+                log::error!("Failed to set activation policy to Regular: {}", e);
+            }
+            // Force NSApp-level activation — without this, macOS focus-stealing
+            // protection keeps the window behind the currently active app even
+            // after makeKeyAndOrderFront.
+            unsafe {
+                use objc::{class, msg_send, sel, sel_impl, runtime::Object};
+                let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+                let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
+            }
+        }
         if let Err(e) = main_window.unminimize() {
             log::error!("Failed to unminimize webview window: {}", e);
         }
@@ -96,12 +112,6 @@ fn show_main_window(app: &AppHandle) {
         }
         if let Err(e) = main_window.set_focus() {
             log::error!("Failed to focus webview window: {}", e);
-        }
-        #[cfg(target_os = "macos")]
-        {
-            if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
-                log::error!("Failed to set activation policy to Regular: {}", e);
-            }
         }
         return;
     }

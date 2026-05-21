@@ -6,7 +6,7 @@ use log::{debug, error, info};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -300,6 +300,14 @@ impl AudioRecordingManager {
         // Get the selected device from settings, considering clamshell mode
         let settings = get_settings(&self.app_handle);
         let selected_device = self.get_effective_microphone_device(&settings);
+
+        // Warn the user if they're in clamshell mode without a dedicated clamshell mic set.
+        // The non-macOS stub always returns Ok(false), so this is a no-op on other platforms.
+        if let Ok(true) = clamshell::is_clamshell() {
+            if settings.clamshell_microphone.is_none() {
+                let _ = self.app_handle.emit("clamshell-warning", ());
+            }
+        }
 
         // Pre-flight check: if no device was selected/configured AND no devices
         // exist at all, fail early with a clear error instead of letting cpal
