@@ -635,6 +635,12 @@
     "title": "Application Language",
     "description": "Change the language of the Handy interface"
   },
+  "warnings": {
+    "clamshellMic": {
+      "title": "Lid closed — no clamshell mic set",
+      "description": "Recording with the built-in mic. Set a clamshell microphone in Sound settings."
+    }
+  },
   "overlay": {
     "transcribing": "Transcribing...",
     "processing": "Processing..."
