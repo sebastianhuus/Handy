@@ -116,6 +116,30 @@ function App() {
     };
   }, [settings?.debug_mode, updateSetting]);
 
+  // Handle Cmd/Ctrl+1–5 keyboard shortcuts for panel navigation
+  useEffect(() => {
+    const PANEL_SHORTCUTS: SidebarSection[] = [
+      "general",
+      "models",
+      "advanced",
+      "history",
+      "about",
+    ];
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey)
+        return;
+      const index = parseInt(event.key) - 1;
+      if (index >= 0 && index < PANEL_SHORTCUTS.length) {
+        event.preventDefault();
+        setCurrentSection(PANEL_SHORTCUTS[index]);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   // Listen for recording errors from the backend and show a toast
   useEffect(() => {
     const unlisten = listen<RecordingErrorEvent>("recording-error", (event) => {

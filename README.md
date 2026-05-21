@@ -4,6 +4,7 @@
 
 THANK YOU to cjpais for the most forkable dictation app!!! I made some additions I was missing from Wispr Flow, trying to break free from the cloud :)
 
+- You can use Cmd/Ctrl + 1,2,3,4,5 to quickly navigate between the pages inside the app for a faster workflow – less clicking, more keyboard!
 - Enables the debug setting "clamshell microphone" for MacOS and notifies you if you dictate with the lid closed and mic unavailable.
 - Numbers are converted (e.g "one thousand" becomes "1000")
 - Spelling correction (key value pairs) for the STT; "sim link" would be corrected to "symlink" if that is what you are trying to say.
