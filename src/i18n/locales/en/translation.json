@@ -500,6 +500,11 @@
         "months3": "After 3 months",
         "placeholder": "Select retention period..."
       },
+      "transcriptionLog": {
+        "label": "Log Transcriptions to File",
+        "description": "Append each transcription to a JSONL file on disk. Useful for analyzing transcription quality over time. The file is never auto-deleted.",
+        "filePath": "Log file"
+      },
       "alwaysOnMicrophone": {
         "label": "Always-On Microphone",
         "description": "Keep microphone active for faster response"

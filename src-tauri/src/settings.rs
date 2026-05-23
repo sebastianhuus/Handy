@@ -480,6 +480,8 @@ pub struct AppSettings {
     pub keyword_actions_enabled: bool,
     #[serde(default)]
     pub convert_number_words: bool,
+    #[serde(default)]
+    pub log_transcriptions: bool,
 }
 
 fn default_model() -> String {
@@ -877,6 +879,7 @@ pub fn get_default_settings() -> AppSettings {
         noise_suppression: false,
         keyword_actions_enabled: false,
         convert_number_words: false,
+        log_transcriptions: false,
     }
 }
 
