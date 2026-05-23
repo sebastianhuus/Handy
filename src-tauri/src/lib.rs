@@ -177,6 +177,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
 
+    // Watch for input device changes and notify the frontend so the microphone
+    // dropdown stays current and the configured device is re-selected automatically
+    // when it is reconnected (e.g. USB hub re-plug).
+    managers::audio::start_device_watcher(app_handle.clone());
+
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
     // after permissions are confirmed (on macOS) or after onboarding completes.

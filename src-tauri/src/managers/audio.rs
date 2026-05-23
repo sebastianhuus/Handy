@@ -3,10 +3,11 @@ use crate::helpers::clamshell;
 use crate::settings::{get_settings, AppSettings};
 use crate::utils;
 use log::{debug, error, info};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -538,4 +539,41 @@ impl AudioRecordingManager {
             }
         }
     }
+}
+
+const DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Polls the input device list every few seconds and emits `audio-devices-changed`
+/// to the frontend whenever the set of available microphones changes. This lets the
+/// UI update the dropdown and re-select the configured device automatically after
+/// it is reconnected (e.g. a USB hub that was unplugged then plugged back in).
+pub fn start_device_watcher(app: AppHandle) {
+    std::thread::Builder::new()
+        .name("audio-device-watcher".into())
+        .spawn(move || {
+            let mut known: HashSet<String> = list_input_devices()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|d| d.name)
+                .collect();
+
+            loop {
+                std::thread::sleep(DEVICE_POLL_INTERVAL);
+
+                let current: HashSet<String> = match list_input_devices() {
+                    Ok(devices) => devices.into_iter().map(|d| d.name).collect(),
+                    Err(e) => {
+                        debug!("Device watcher: failed to list devices: {}", e);
+                        continue;
+                    }
+                };
+
+                if current != known {
+                    debug!("Audio device list changed, notifying frontend");
+                    let _ = app.emit("audio-devices-changed", ());
+                    known = current;
+                }
+            }
+        })
+        .expect("Failed to spawn audio device watcher thread");
 }

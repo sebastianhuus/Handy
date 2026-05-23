@@ -167,6 +167,18 @@ function App() {
     };
   }, [t]);
 
+  // Refresh the microphone list whenever the backend detects a device change
+  // (e.g. USB hub reconnect). This causes the dropdown to show the restored
+  // device and re-select it if it matches the persisted setting.
+  useEffect(() => {
+    const unlisten = listen("audio-devices-changed", () => {
+      refreshAudioDevices();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [refreshAudioDevices]);
+
   // Listen for paste failures and show a toast.
   // The technical error detail is logged to handy.log on the Rust side
   // (see actions.rs `error!("Failed to paste transcription: ...")`),
