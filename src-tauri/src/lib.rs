@@ -99,8 +99,9 @@ fn show_main_window(app: &AppHandle) {
             // protection keeps the window behind the currently active app even
             // after makeKeyAndOrderFront.
             unsafe {
-                use objc::{class, msg_send, sel, sel_impl, runtime::Object};
-                let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+                use objc2::runtime::AnyObject;
+                use objc2::{class, msg_send};
+                let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
                 let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
             }
         }
