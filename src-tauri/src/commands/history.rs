@@ -108,6 +108,18 @@ pub async fn retry_history_entry_transcription(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn get_transcription_log_path(
+    history_manager: State<'_, Arc<HistoryManager>>,
+) -> Result<String, String> {
+    history_manager
+        .log_path()
+        .to_str()
+        .ok_or_else(|| "Invalid log path".to_string())
+        .map(|s| s.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn update_history_limit(
     app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,

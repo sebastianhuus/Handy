@@ -6,6 +6,7 @@ use rusqlite_migration::{Migrations, M};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri_specta::Event;
@@ -69,6 +70,7 @@ pub struct HistoryManager {
     app_handle: AppHandle,
     recordings_dir: PathBuf,
     db_path: PathBuf,
+    log_path: PathBuf,
 }
 
 impl HistoryManager {
@@ -84,10 +86,13 @@ impl HistoryManager {
             debug!("Created recordings directory: {:?}", recordings_dir);
         }
 
+        let log_path = app_data_dir.join("transcription_log.jsonl");
+
         let manager = Self {
             app_handle: app_handle.clone(),
             recordings_dir,
             db_path,
+            log_path,
         };
 
         // Initialize database and run migrations synchronously
@@ -214,6 +219,32 @@ impl HistoryManager {
         &self.recordings_dir
     }
 
+    pub fn log_path(&self) -> &std::path::Path {
+        &self.log_path
+    }
+
+    fn append_transcription_log(&self, raw: &str, post_processed: Option<&str>) {
+        let timestamp = Utc::now().to_rfc3339();
+        let line = serde_json::json!({
+            "timestamp": timestamp,
+            "raw": raw,
+            "post_processed": post_processed,
+        });
+
+        match fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_path)
+        {
+            Ok(mut file) => {
+                if let Err(e) = writeln!(file, "{}", line) {
+                    error!("Failed to write transcription log entry: {}", e);
+                }
+            }
+            Err(e) => error!("Failed to open transcription log: {}", e),
+        }
+    }
+
     /// Save a new history entry to the database.
     /// The WAV file should already have been written to the recordings directory.
     pub fn save_entry(
@@ -264,6 +295,15 @@ impl HistoryManager {
         };
 
         debug!("Saved history entry with id {}", entry.id);
+
+        if !entry.transcription_text.is_empty()
+            && crate::settings::get_settings(&self.app_handle).log_transcriptions
+        {
+            self.append_transcription_log(
+                &entry.transcription_text,
+                entry.post_processed_text.as_deref(),
+            );
+        }
 
         self.cleanup_old_entries()?;
 

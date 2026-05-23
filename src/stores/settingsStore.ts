@@ -167,6 +167,8 @@ const settingUpdaters: {
     commands.changeKeywordActionsEnabledSetting(value as boolean),
   convert_number_words: (value) =>
     commands.setConvertNumberWords(value as boolean),
+  log_transcriptions: (value) =>
+    commands.changeLogTranscriptionsSetting(value as boolean),
 };
 
 export const useSettingsStore = create<SettingsStore>()(
