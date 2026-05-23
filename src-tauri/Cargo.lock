@@ -2615,7 +2615,7 @@ dependencies = [
  "log",
  "natural",
  "nnnoiseless",
- "objc",
+ "objc2",
  "once_cell",
  "rdev 0.5.0-2",
  "regex",
