@@ -1,4 +1,4 @@
-use crate::audio_toolkit::{apply_correction_pairs, apply_custom_words, convert_number_words, filter_transcription_output};
+use crate::audio_toolkit::{apply_correction_pairs, apply_custom_words, apply_quote_cues, convert_number_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
@@ -719,6 +719,8 @@ impl TranscriptionManager {
             &settings.app_language,
             &settings.custom_filler_words,
         );
+
+        let filtered_result = apply_quote_cues(&filtered_result);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
