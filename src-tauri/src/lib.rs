@@ -256,6 +256,44 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             "quit" => {
                 app.exit(0);
             }
+            id if id.starts_with("mic_default_select:") => {
+                let device_name = id.strip_prefix("mic_default_select:").unwrap().to_string();
+                let current = settings::get_settings(app).selected_microphone;
+                let already_selected = match &current {
+                    None => device_name == "default",
+                    Some(name) => *name == device_name,
+                };
+                if already_selected {
+                    return;
+                }
+                let app_clone = app.clone();
+                std::thread::spawn(move || {
+                    match commands::audio::set_selected_microphone(app_clone.clone(), device_name) {
+                        Ok(()) => log::info!("Microphone changed via tray."),
+                        Err(e) => log::error!("Failed to change microphone via tray: {}", e),
+                    }
+                    tray::update_tray_menu(&app_clone, &tray::TrayIconState::Idle, None);
+                });
+            }
+            id if id.starts_with("mic_clamshell_select:") => {
+                let device_name = id.strip_prefix("mic_clamshell_select:").unwrap().to_string();
+                let current = settings::get_settings(app).clamshell_microphone;
+                let already_selected = match &current {
+                    None => device_name == "default",
+                    Some(name) => *name == device_name,
+                };
+                if already_selected {
+                    return;
+                }
+                let app_clone = app.clone();
+                std::thread::spawn(move || {
+                    match commands::audio::set_clamshell_microphone(app_clone.clone(), device_name) {
+                        Ok(()) => log::info!("Clamshell microphone changed via tray."),
+                        Err(e) => log::error!("Failed to change clamshell microphone via tray: {}", e),
+                    }
+                    tray::update_tray_menu(&app_clone, &tray::TrayIconState::Idle, None);
+                });
+            }
             id if id.starts_with("model_select:") => {
                 let model_id = id.strip_prefix("model_select:").unwrap().to_string();
                 let current_model = settings::get_settings(app).selected_model;

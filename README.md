@@ -4,6 +4,9 @@
 
 THANK YOU to cjpais for the most forkable dictation app!!! I made some additions I was missing from Wispr Flow, trying to break free from the cloud :)
 
+- Adds microphone selector to menu bar for both regular and clamshell mode
+- Logging all transcription to disk. I wanted this for later analyzing the coherence and quality of transcripts (note: doesn't log audio files, just text)
+- App polls for input devices when you start a recording, allowing us to use the correct mic, then auto switch to clamshell mode if MacBook lid closed.
 - Implements some cheap DSP filters and plosive cleanup based on [pardeike/BroadcastVoiceDSP](https://github.com/pardeike/BroadcastVoiceDSP)
 - You can use Cmd/Ctrl + 1,2,3,4,5 to quickly navigate between the pages inside the app for a faster workflow – less moving the mouse and faster navigation!
 - Enables the debug setting "clamshell microphone" for MacOS and notifies you if you dictate with the lid closed and mic unavailable.

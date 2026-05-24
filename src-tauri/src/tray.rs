@@ -1,3 +1,4 @@
+use crate::audio_toolkit::list_input_devices;
 use crate::managers::history::{HistoryEntry, HistoryManager};
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
@@ -198,23 +199,87 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
             )
             .expect("failed to create menu")
         }
-        TrayIconState::Idle => Menu::with_items(
-            app,
-            &[
-                &version_i,
-                &separator(),
-                &copy_last_transcript_i,
-                &separator(),
-                &model_submenu,
-                &unload_model_i,
-                &separator(),
-                &settings_i,
-                &check_updates_i,
-                &separator(),
-                &quit_i,
-            ],
-        )
-        .expect("failed to create menu"),
+        TrayIconState::Idle => {
+            let devices = list_input_devices().unwrap_or_default();
+            let selected_mic = settings.selected_microphone.clone();
+
+            let mic_submenu = {
+                let submenu = Submenu::with_id(app, "mic_submenu", &strings.microphone, true)
+                    .expect("failed to create mic submenu");
+                let default_item = CheckMenuItem::with_id(
+                    app,
+                    "mic_default_select:default",
+                    &strings.mic_default,
+                    true,
+                    selected_mic.is_none(),
+                    None::<&str>,
+                )
+                .expect("failed to create default mic item");
+                let _ = submenu.append(&default_item);
+                for device in &devices {
+                    let item_id = format!("mic_default_select:{}", device.name);
+                    let item = CheckMenuItem::with_id(
+                        app,
+                        &item_id,
+                        &device.name,
+                        true,
+                        selected_mic.as_deref() == Some(device.name.as_str()),
+                        None::<&str>,
+                    )
+                    .expect("failed to create mic item");
+                    let _ = submenu.append(&item);
+                }
+                submenu
+            };
+
+            #[cfg(target_os = "macos")]
+            let clamshell_mic_submenu = {
+                let selected_clamshell = settings.clamshell_microphone.clone();
+                let submenu = Submenu::with_id(app, "clamshell_mic_submenu", &strings.lid_closed_mic, true)
+                    .expect("failed to create clamshell mic submenu");
+                let default_item = CheckMenuItem::with_id(
+                    app,
+                    "mic_clamshell_select:default",
+                    &strings.mic_default,
+                    true,
+                    selected_clamshell.is_none(),
+                    None::<&str>,
+                )
+                .expect("failed to create default clamshell mic item");
+                let _ = submenu.append(&default_item);
+                for device in &devices {
+                    let item_id = format!("mic_clamshell_select:{}", device.name);
+                    let item = CheckMenuItem::with_id(
+                        app,
+                        &item_id,
+                        &device.name,
+                        true,
+                        selected_clamshell.as_deref() == Some(device.name.as_str()),
+                        None::<&str>,
+                    )
+                    .expect("failed to create clamshell mic item");
+                    let _ = submenu.append(&item);
+                }
+                submenu
+            };
+
+            let menu = Menu::new(app).expect("failed to create menu");
+            let _ = menu.append(&version_i);
+            let _ = menu.append(&separator());
+            let _ = menu.append(&copy_last_transcript_i);
+            let _ = menu.append(&separator());
+            let _ = menu.append(&model_submenu);
+            let _ = menu.append(&unload_model_i);
+            let _ = menu.append(&mic_submenu);
+            #[cfg(target_os = "macos")]
+            let _ = menu.append(&clamshell_mic_submenu);
+            let _ = menu.append(&separator());
+            let _ = menu.append(&settings_i);
+            let _ = menu.append(&check_updates_i);
+            let _ = menu.append(&separator());
+            let _ = menu.append(&quit_i);
+            menu
+        }
     };
 
     let tray = app.state::<TrayIcon>();
