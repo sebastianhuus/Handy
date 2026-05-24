@@ -5,6 +5,9 @@
     "copyLastTranscript": "Copy Last Transcript",
     "unloadModel": "Unload Model",
     "model": "Model",
+    "microphone": "Microphone",
+    "lidClosedMic": "Clamshell Microphone",
+    "micDefault": "Default",
     "quit": "Quit",
     "cancel": "Cancel"
   },
