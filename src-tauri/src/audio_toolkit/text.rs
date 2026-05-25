@@ -728,6 +728,27 @@ mod tests {
     }
 
     #[test]
+    fn test_number_pronoun_one_unchanged() {
+        // Demonstratives — "one" is a pronoun, not a quantity
+        assert_eq!(convert_number_words("this one"), "this one");
+        assert_eq!(convert_number_words("that one"), "that one");
+        assert_eq!(convert_number_words("which one"), "which one");
+        assert_eq!(convert_number_words("no one"), "no one");
+        assert_eq!(convert_number_words("each one"), "each one");
+        assert_eq!(convert_number_words("every one"), "every one");
+        // Multi-word: only the pronoun "one" is suppressed; other numbers convert normally
+        assert_eq!(
+            convert_number_words("pick this one or that one out of twenty"),
+            "pick this one or that one out of 20"
+        );
+        // "this one hundred" — "one hundred" is a multi-word quantity, consumed==2, must convert
+        assert_eq!(convert_number_words("this one hundred users"), "this 100 users");
+        // Standalone "one" without an inhibiting predecessor still converts
+        assert_eq!(convert_number_words("one item"), "1 item");
+        assert_eq!(convert_number_words("give me one"), "give me 1");
+    }
+
+    #[test]
     fn test_apply_custom_words_trailing_number_not_doubled() {
         // Verify that trailing non-alpha chars (like numbers) aren't double-counted
         // between build_ngram stripping them and extract_punctuation capturing them
@@ -1064,6 +1085,20 @@ fn try_parse_number(words: &[&str], start: usize) -> Option<(String, usize)> {
     Some((format!("{}{}{}", lead_punct, num, trail_punct), total_consumed))
 }
 
+/// Words that, when immediately preceding a standalone "one", indicate it is
+/// a pronoun rather than a quantity ("this one", "that one", "no one", …).
+const PRONOUN_ONE_INHIBITORS: &[&str] = &["this", "that", "which", "no", "each", "every"];
+
+/// Returns true when the word at `pos` is a standalone "one" that follows a
+/// demonstrative or similar word, making it a pronoun rather than a numeral.
+fn is_pronoun_one(words: &[&str], pos: usize, consumed: usize) -> bool {
+    if consumed != 1 || word_core(words[pos]).to_lowercase() != "one" || pos == 0 {
+        return false;
+    }
+    let prev = word_core(words[pos - 1]).to_lowercase();
+    PRONOUN_ONE_INHIBITORS.contains(&prev.as_str())
+}
+
 /// Post-processing pass that converts spoken number words to digit form.
 ///
 /// Examples (non-exhaustive):
@@ -1078,6 +1113,9 @@ fn try_parse_number(words: &[&str], start: usize) -> Option<(String, usize)> {
 /// unchanged — they are too context-dependent to convert safely
 /// ("give me a second", "second opinion").
 /// Hyphenated forms ("twenty-three") are not currently handled.
+///
+/// Pronoun "one" after demonstratives ("this one", "that one", "which one",
+/// "no one", "each one", "every one") is also left unchanged.
 pub fn convert_number_words(text: &str) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.is_empty() {
@@ -1089,7 +1127,11 @@ pub fn convert_number_words(text: &str) -> String {
 
     while i < words.len() {
         if let Some((num_str, consumed)) = try_parse_number(&words, i) {
-            result.push(num_str);
+            if is_pronoun_one(&words, i, consumed) {
+                result.push(words[i].to_string());
+            } else {
+                result.push(num_str);
+            }
             i += consumed;
         } else {
             result.push(words[i].to_string());
