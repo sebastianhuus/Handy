@@ -160,7 +160,7 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
 fn preserve_case_pattern(original: &str, replacement: &str) -> String {
     if original.chars().all(|c| c.is_uppercase()) {
         replacement.to_uppercase()
-    } else if original.chars().next().map_or(false, |c| c.is_uppercase()) {
+    } else if original.chars().next().is_some_and(|c| c.is_uppercase()) {
         let mut chars: Vec<char> = replacement.chars().collect();
         if let Some(first_char) = chars.get_mut(0) {
             *first_char = first_char.to_uppercase().next().unwrap_or(*first_char);
@@ -239,7 +239,9 @@ fn is_consonant_fragment(word: &str) -> bool {
     !word.is_empty()
         && word.len() <= 3
         && word.chars().all(|c| c.is_alphabetic())
-        && !word.chars().any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u'))
+        && !word
+            .chars()
+            .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u'))
 }
 
 /// Collapses repeated words (3+ repetitions) to a single instance, and removes
@@ -638,7 +640,10 @@ mod tests {
     #[test]
     fn test_number_thousands_and_large() {
         assert_eq!(convert_number_words("two thousand"), "2000");
-        assert_eq!(convert_number_words("twenty three thousand four hundred and fifty six"), "23456");
+        assert_eq!(
+            convert_number_words("twenty three thousand four hundred and fifty six"),
+            "23456"
+        );
         assert_eq!(convert_number_words("one million"), "1000000");
         assert_eq!(convert_number_words("two hundred thousand"), "200000");
     }
@@ -649,7 +654,10 @@ mod tests {
         assert_eq!(convert_number_words("thirty two point seven five"), "32.75");
         assert_eq!(convert_number_words("one point two three"), "1.23");
         // "point" alone (no following digit) stays unconsumed
-        assert_eq!(convert_number_words("make a point about this"), "make a point about this");
+        assert_eq!(
+            convert_number_words("make a point about this"),
+            "make a point about this"
+        );
     }
 
     #[test]
@@ -664,8 +672,14 @@ mod tests {
     fn test_number_standalone_ordinals_unchanged() {
         // Standalone ordinals must not be converted — too ambiguous
         assert_eq!(convert_number_words("give me a second"), "give me a second");
-        assert_eq!(convert_number_words("first and foremost"), "first and foremost");
-        assert_eq!(convert_number_words("the second opinion"), "the second opinion");
+        assert_eq!(
+            convert_number_words("first and foremost"),
+            "first and foremost"
+        );
+        assert_eq!(
+            convert_number_words("the second opinion"),
+            "the second opinion"
+        );
     }
 
     #[test]
@@ -724,7 +738,10 @@ mod tests {
     fn test_number_bare_scales_unchanged() {
         // "hundred" / "million" without a preceding number word — leave unchanged
         assert_eq!(convert_number_words("hundred"), "hundred");
-        assert_eq!(convert_number_words("million dollar idea"), "million dollar idea");
+        assert_eq!(
+            convert_number_words("million dollar idea"),
+            "million dollar idea"
+        );
     }
 
     #[test]
@@ -742,7 +759,10 @@ mod tests {
             "pick this one or that one out of 20"
         );
         // "this one hundred" — "one hundred" is a multi-word quantity, consumed==2, must convert
-        assert_eq!(convert_number_words("this one hundred users"), "this 100 users");
+        assert_eq!(
+            convert_number_words("this one hundred users"),
+            "this 100 users"
+        );
         // Standalone "one" without an inhibiting predecessor still converts
         assert_eq!(convert_number_words("one item"), "1 item");
         assert_eq!(convert_number_words("give me one"), "give me 1");
@@ -815,70 +835,70 @@ enum NumWord {
 /// recognised number word.
 fn classify_number_word(word: &str) -> Option<NumWord> {
     Some(match word {
-        "zero"        => NumWord::Ones(0),
-        "one"         => NumWord::Ones(1),
-        "two"         => NumWord::Ones(2),
-        "three"       => NumWord::Ones(3),
-        "four"        => NumWord::Ones(4),
-        "five"        => NumWord::Ones(5),
-        "six"         => NumWord::Ones(6),
-        "seven"       => NumWord::Ones(7),
-        "eight"       => NumWord::Ones(8),
-        "nine"        => NumWord::Ones(9),
-        "ten"         => NumWord::Ones(10),
-        "eleven"      => NumWord::Ones(11),
-        "twelve"      => NumWord::Ones(12),
-        "thirteen"    => NumWord::Ones(13),
-        "fourteen"    => NumWord::Ones(14),
-        "fifteen"     => NumWord::Ones(15),
-        "sixteen"     => NumWord::Ones(16),
-        "seventeen"   => NumWord::Ones(17),
-        "eighteen"    => NumWord::Ones(18),
-        "nineteen"    => NumWord::Ones(19),
-        "twenty"      => NumWord::Tens(20),
-        "thirty"      => NumWord::Tens(30),
-        "forty"       => NumWord::Tens(40),
-        "fifty"       => NumWord::Tens(50),
-        "sixty"       => NumWord::Tens(60),
-        "seventy"     => NumWord::Tens(70),
-        "eighty"      => NumWord::Tens(80),
-        "ninety"      => NumWord::Tens(90),
-        "hundred"     => NumWord::Hundred,
-        "thousand"    => NumWord::BigScale(1_000),
-        "million"     => NumWord::BigScale(1_000_000),
-        "billion"     => NumWord::BigScale(1_000_000_000),
-        "and"         => NumWord::Connector,
-        "point"       => NumWord::Point,
+        "zero" => NumWord::Ones(0),
+        "one" => NumWord::Ones(1),
+        "two" => NumWord::Ones(2),
+        "three" => NumWord::Ones(3),
+        "four" => NumWord::Ones(4),
+        "five" => NumWord::Ones(5),
+        "six" => NumWord::Ones(6),
+        "seven" => NumWord::Ones(7),
+        "eight" => NumWord::Ones(8),
+        "nine" => NumWord::Ones(9),
+        "ten" => NumWord::Ones(10),
+        "eleven" => NumWord::Ones(11),
+        "twelve" => NumWord::Ones(12),
+        "thirteen" => NumWord::Ones(13),
+        "fourteen" => NumWord::Ones(14),
+        "fifteen" => NumWord::Ones(15),
+        "sixteen" => NumWord::Ones(16),
+        "seventeen" => NumWord::Ones(17),
+        "eighteen" => NumWord::Ones(18),
+        "nineteen" => NumWord::Ones(19),
+        "twenty" => NumWord::Tens(20),
+        "thirty" => NumWord::Tens(30),
+        "forty" => NumWord::Tens(40),
+        "fifty" => NumWord::Tens(50),
+        "sixty" => NumWord::Tens(60),
+        "seventy" => NumWord::Tens(70),
+        "eighty" => NumWord::Tens(80),
+        "ninety" => NumWord::Tens(90),
+        "hundred" => NumWord::Hundred,
+        "thousand" => NumWord::BigScale(1_000),
+        "million" => NumWord::BigScale(1_000_000),
+        "billion" => NumWord::BigScale(1_000_000_000),
+        "and" => NumWord::Connector,
+        "point" => NumWord::Point,
         // Ordinals — only valid at the tail of a multi-word number sequence
-        "first"       => NumWord::Ordinal(1),
-        "second"      => NumWord::Ordinal(2),
-        "third"       => NumWord::Ordinal(3),
-        "fourth"      => NumWord::Ordinal(4),
-        "fifth"       => NumWord::Ordinal(5),
-        "sixth"       => NumWord::Ordinal(6),
-        "seventh"     => NumWord::Ordinal(7),
-        "eighth"      => NumWord::Ordinal(8),
-        "ninth"       => NumWord::Ordinal(9),
-        "tenth"       => NumWord::Ordinal(10),
-        "eleventh"    => NumWord::Ordinal(11),
-        "twelfth"     => NumWord::Ordinal(12),
-        "thirteenth"  => NumWord::Ordinal(13),
-        "fourteenth"  => NumWord::Ordinal(14),
-        "fifteenth"   => NumWord::Ordinal(15),
-        "sixteenth"   => NumWord::Ordinal(16),
+        "first" => NumWord::Ordinal(1),
+        "second" => NumWord::Ordinal(2),
+        "third" => NumWord::Ordinal(3),
+        "fourth" => NumWord::Ordinal(4),
+        "fifth" => NumWord::Ordinal(5),
+        "sixth" => NumWord::Ordinal(6),
+        "seventh" => NumWord::Ordinal(7),
+        "eighth" => NumWord::Ordinal(8),
+        "ninth" => NumWord::Ordinal(9),
+        "tenth" => NumWord::Ordinal(10),
+        "eleventh" => NumWord::Ordinal(11),
+        "twelfth" => NumWord::Ordinal(12),
+        "thirteenth" => NumWord::Ordinal(13),
+        "fourteenth" => NumWord::Ordinal(14),
+        "fifteenth" => NumWord::Ordinal(15),
+        "sixteenth" => NumWord::Ordinal(16),
         "seventeenth" => NumWord::Ordinal(17),
-        "eighteenth"  => NumWord::Ordinal(18),
-        "nineteenth"  => NumWord::Ordinal(19),
-        "twentieth"   => NumWord::Ordinal(20),
-        "thirtieth"   => NumWord::Ordinal(30),
-        "fortieth"    => NumWord::Ordinal(40),
-        "fiftieth"    => NumWord::Ordinal(50),
-        "sixtieth"    => NumWord::Ordinal(60),
-        "seventieth"  => NumWord::Ordinal(70),
-        "eightieth"   => NumWord::Ordinal(80),
-        "ninetieth"   => NumWord::Ordinal(90),
-        "hundredth"   => NumWord::ScaleOrdinal(100),
-        "thousandth"  => NumWord::ScaleOrdinal(1_000),
+        "eighteenth" => NumWord::Ordinal(18),
+        "nineteenth" => NumWord::Ordinal(19),
+        "twentieth" => NumWord::Ordinal(20),
+        "thirtieth" => NumWord::Ordinal(30),
+        "fortieth" => NumWord::Ordinal(40),
+        "fiftieth" => NumWord::Ordinal(50),
+        "sixtieth" => NumWord::Ordinal(60),
+        "seventieth" => NumWord::Ordinal(70),
+        "eightieth" => NumWord::Ordinal(80),
+        "ninetieth" => NumWord::Ordinal(90),
+        "hundredth" => NumWord::ScaleOrdinal(100),
+        "thousandth" => NumWord::ScaleOrdinal(1_000),
         _ => return None,
     })
 }
@@ -1082,7 +1102,10 @@ fn try_parse_number(words: &[&str], start: usize) -> Option<(String, usize)> {
         format!("{}{}", sign, int_val)
     };
 
-    Some((format!("{}{}{}", lead_punct, num, trail_punct), total_consumed))
+    Some((
+        format!("{}{}{}", lead_punct, num, trail_punct),
+        total_consumed,
+    ))
 }
 
 /// Words that, when immediately preceding a standalone "one", indicate it is
@@ -1161,8 +1184,16 @@ pub fn apply_correction_pairs(text: &str, pairs: &[CorrectionPair]) -> String {
         // \b word boundaries work at string edges and around punctuation/spaces.
         // Fall back to no-boundary match if the from string starts/ends with a
         // non-word character (e.g. "#tag"), which makes \b invalid at that edge.
-        let pattern = if pair.from.chars().next().map_or(false, |c| c.is_alphanumeric())
-            && pair.from.chars().last().map_or(false, |c| c.is_alphanumeric())
+        let pattern = if pair
+            .from
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_alphanumeric())
+            && pair
+                .from
+                .chars()
+                .last()
+                .map_or(false, |c| c.is_alphanumeric())
         {
             format!(r"(?i)\b{}\b", escaped)
         } else {

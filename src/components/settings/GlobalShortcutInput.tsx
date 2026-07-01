@@ -170,7 +170,9 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
     // Suspend all bindings so nothing fires while recording a new hotkey
     const ids = Object.keys(bindings);
     suspendedIdsRef.current = ids;
-    await Promise.all(ids.map((id) => commands.suspendBinding(id).catch(console.error)));
+    await Promise.all(
+      ids.map((id) => commands.suspendBinding(id).catch(console.error)),
+    );
     setIsRecording(true);
     setKeyPressed([]);
     setRecordedKeys([]);

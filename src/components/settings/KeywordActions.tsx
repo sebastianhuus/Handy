@@ -26,5 +26,5 @@ export const KeywordActions: React.FC<KeywordActionsProps> = React.memo(
         grouped={grouped}
       />
     );
-  }
+  },
 );
