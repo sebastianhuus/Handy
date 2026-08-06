@@ -145,10 +145,7 @@ pub fn unregister_hotkey(app: &AppHandle, hotkey_string: &str) -> Result<(), Str
     };
 
     app.global_shortcut().unregister(shortcut).map_err(|e| {
-        let error_msg = format!(
-            "Failed to unregister shortcut '{}': {}",
-            hotkey_string, e
-        );
+        let error_msg = format!("Failed to unregister shortcut '{}': {}", hotkey_string, e);
         error!("unregister_tauri_shortcut error: {}", error_msg);
         error_msg
     })?;

@@ -89,7 +89,11 @@ export const SECTIONS_CONFIG = {
 } as const satisfies Record<string, SectionConfig>;
 
 interface SidebarItemProps {
-  section: { id: SidebarSection; labelKey: string; icon: React.ComponentType<IconProps> };
+  section: {
+    id: SidebarSection;
+    labelKey: string;
+    icon: React.ComponentType<IconProps>;
+  };
   isActive: boolean;
   onSectionChange: (section: SidebarSection) => void;
 }

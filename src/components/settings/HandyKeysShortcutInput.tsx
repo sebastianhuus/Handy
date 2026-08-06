@@ -162,7 +162,9 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     // Suspend all bindings so nothing fires while recording a new hotkey
     const ids = Object.keys(bindings);
     suspendedIdsRef.current = ids;
-    await Promise.all(ids.map((id) => commands.suspendBinding(id).catch(console.error)));
+    await Promise.all(
+      ids.map((id) => commands.suspendBinding(id).catch(console.error)),
+    );
     try {
       await commands.startHandyKeysRecording(shortcutId);
       setIsRecording(true);

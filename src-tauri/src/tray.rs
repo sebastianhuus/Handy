@@ -235,8 +235,9 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
             #[cfg(target_os = "macos")]
             let clamshell_mic_submenu = {
                 let selected_clamshell = settings.clamshell_microphone.clone();
-                let submenu = Submenu::with_id(app, "clamshell_mic_submenu", &strings.lid_closed_mic, true)
-                    .expect("failed to create clamshell mic submenu");
+                let submenu =
+                    Submenu::with_id(app, "clamshell_mic_submenu", &strings.lid_closed_mic, true)
+                        .expect("failed to create clamshell mic submenu");
                 let default_item = CheckMenuItem::with_id(
                     app,
                     "mic_clamshell_select:default",
