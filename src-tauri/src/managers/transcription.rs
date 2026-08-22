@@ -1,5 +1,5 @@
 use crate::audio_toolkit::{
-    apply_custom_words, detect_output_language, normalize_transcription_output,
+    apply_custom_words, apply_quote_cues, detect_output_language, normalize_transcription_output,
     remove_filler_words, OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
@@ -1133,6 +1133,7 @@ impl TranscriptionManager {
             &finalized.output_language,
             &finalized.supported_languages,
         );
+        let filtered = apply_quote_cues(&filtered);
 
         self.maybe_unload_immediately("streaming transcription");
         Ok(Some(filtered))
@@ -1490,6 +1491,7 @@ impl TranscriptionManager {
             &output_language,
             &model_languages,
         );
+        let filtered_result = apply_quote_cues(&filtered_result);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
