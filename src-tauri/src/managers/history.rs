@@ -6,6 +6,7 @@ use rusqlite_migration::{Migrations, M};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri_specta::Event;
@@ -69,6 +70,7 @@ pub struct HistoryManager {
     app_handle: AppHandle,
     recordings_dir: PathBuf,
     db_path: PathBuf,
+    log_path: PathBuf,
 }
 
 impl HistoryManager {
@@ -84,10 +86,13 @@ impl HistoryManager {
             debug!("Created recordings directory: {:?}", recordings_dir);
         }
 
+        let log_path = app_data_dir.join("transcription_log.jsonl");
+
         let manager = Self {
             app_handle: app_handle.clone(),
             recordings_dir,
             db_path,
+            log_path,
         };
 
         // Initialize database and run migrations synchronously
@@ -214,6 +219,46 @@ impl HistoryManager {
         &self.recordings_dir
     }
 
+    pub fn log_path(&self) -> &std::path::Path {
+        &self.log_path
+    }
+
+    /// Append one entry to the JSONL transcription log used for offline analysis.
+    /// This file is separate from the sqlite history/retention system: it is
+    /// append-only and never pruned, so it keeps growing as long as the
+    /// `log_transcriptions` setting is enabled.
+    fn append_transcription_log(&self, raw: &str, post_processed: Option<&str>) {
+        Self::append_transcription_log_to(&self.log_path, raw, post_processed);
+    }
+
+    /// Path-parameterized so it can be exercised in tests without a full
+    /// `HistoryManager` (which requires an `AppHandle` to construct).
+    fn append_transcription_log_to(
+        log_path: &std::path::Path,
+        raw: &str,
+        post_processed: Option<&str>,
+    ) {
+        let timestamp = Utc::now().to_rfc3339();
+        let line = serde_json::json!({
+            "timestamp": timestamp,
+            "raw": raw,
+            "post_processed": post_processed,
+        });
+
+        match fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)
+        {
+            Ok(mut file) => {
+                if let Err(e) = writeln!(file, "{}", line) {
+                    error!("Failed to write transcription log entry: {}", e);
+                }
+            }
+            Err(e) => error!("Failed to open transcription log: {}", e),
+        }
+    }
+
     /// Save a new history entry to the database.
     /// The WAV file should already have been written to the recordings directory.
     pub fn save_entry(
@@ -264,6 +309,15 @@ impl HistoryManager {
         };
 
         debug!("Saved history entry with id {}", entry.id);
+
+        if !entry.transcription_text.is_empty()
+            && crate::settings::get_settings(&self.app_handle).log_transcriptions
+        {
+            self.append_transcription_log(
+                &entry.transcription_text,
+                entry.post_processed_text.as_deref(),
+            );
+        }
 
         self.cleanup_old_entries()?;
 
@@ -733,5 +787,50 @@ mod tests {
 
         assert_eq!(entry.timestamp, 100);
         assert_eq!(entry.transcription_text, "completed");
+    }
+
+    #[test]
+    fn append_transcription_log_writes_jsonl_line() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = dir.path().join("transcription_log.jsonl");
+
+        HistoryManager::append_transcription_log_to(&log_path, "hello world", None);
+
+        let contents = fs::read_to_string(&log_path).expect("read log file");
+        let line = contents.lines().next().expect("one line written");
+        let parsed: serde_json::Value = serde_json::from_str(line).expect("valid json line");
+
+        assert_eq!(parsed["raw"], "hello world");
+        assert!(parsed["post_processed"].is_null());
+        assert!(parsed["timestamp"].is_string());
+    }
+
+    #[test]
+    fn append_transcription_log_includes_post_processed_text() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = dir.path().join("transcription_log.jsonl");
+
+        HistoryManager::append_transcription_log_to(&log_path, "raw text", Some("clean text"));
+
+        let contents = fs::read_to_string(&log_path).expect("read log file");
+        let parsed: serde_json::Value =
+            serde_json::from_str(contents.lines().next().expect("one line written"))
+                .expect("valid json line");
+
+        assert_eq!(parsed["raw"], "raw text");
+        assert_eq!(parsed["post_processed"], "clean text");
+    }
+
+    #[test]
+    fn append_transcription_log_appends_multiple_entries() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = dir.path().join("transcription_log.jsonl");
+
+        HistoryManager::append_transcription_log_to(&log_path, "first", None);
+        HistoryManager::append_transcription_log_to(&log_path, "second", Some("processed"));
+
+        let contents = fs::read_to_string(&log_path).expect("read log file");
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 2);
     }
 }

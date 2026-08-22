@@ -177,6 +177,8 @@ const settingUpdaters: {
   extra_recording_buffer_ms: (value) =>
     commands.changeExtraRecordingBufferSetting(value as number),
   noise_suppression: (value) => commands.setNoiseSuppression(value as boolean),
+  log_transcriptions: (value) =>
+    commands.changeLogTranscriptionsSetting(value as boolean),
 };
 
 export const useSettingsStore = create<SettingsStore>()(
