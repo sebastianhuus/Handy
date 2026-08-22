@@ -813,6 +813,14 @@ async setSelectedChannel(channel: number | null) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+async setNoiseSuppression(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_noise_suppression", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setModelUnloadTimeout(timeout: ModelUnloadTimeout) : Promise<void> {
     await TAURI_INVOKE("set_model_unload_timeout", { timeout });
 },
@@ -965,7 +973,7 @@ reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: strin
  * `device_id` when available (or its name for backends such as Metal),
  * never from the process-local device registry index.
  */
-transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; vad_enabled?: boolean;
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; noise_suppression?: boolean; vad_enabled?: boolean;
 /**
  * Which recording overlay to show: None / Minimal / Live. Streaming mode is
  * not gated on this — that follows model capability. Migrated from the old

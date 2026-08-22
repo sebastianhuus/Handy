@@ -474,6 +474,8 @@ pub struct AppSettings {
     pub transcribe_gpu_device: Option<String>,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
+    #[serde(default)]
+    pub noise_suppression: bool,
     #[serde(default = "default_vad_enabled")]
     pub vad_enabled: bool,
     /// Which recording overlay to show: None / Minimal / Live. Streaming mode is
@@ -933,6 +935,7 @@ pub fn get_default_settings() -> AppSettings {
         ort_accelerator: OrtAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),
         extra_recording_buffer_ms: 0,
+        noise_suppression: false,
         vad_enabled: default_vad_enabled(),
         overlay_style: default_overlay_style(),
     }

@@ -13,7 +13,7 @@ use cpal::{
 };
 
 use crate::audio_toolkit::{
-    audio::{AudioVisualiser, FrameResampler},
+    audio::{AudioVisualiser, FrameResampler, NoiseSuppressor},
     constants,
     vad::{self, VadFrame},
     VoiceActivityDetector,
@@ -76,6 +76,7 @@ pub struct AudioRecorder {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<VadConfig>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    noise_suppression: bool,
     audio_cb: Option<AudioFrameCallback>,
     /// Which input channel to use. None = average all (original behavior).
     selected_channel: Option<usize>,
@@ -98,11 +99,17 @@ impl AudioRecorder {
             worker_handle: None,
             vad: None,
             level_cb: None,
+            noise_suppression: false,
             audio_cb: None,
             selected_channel: None,
             config_cache: Arc::new(Mutex::new(None)),
             stream_error: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    pub fn with_noise_suppression(mut self, enabled: bool) -> Self {
+        self.noise_suppression = enabled;
+        self
     }
 
     /// Attach a single VAD engine, reconfigured per session for the offline vs
@@ -178,6 +185,7 @@ impl AudioRecorder {
         let vad = self.vad.clone();
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
+        let noise_suppression = self.noise_suppression;
         // Move the optional real-time audio frame callback into the worker thread
         let audio_cb = self.audio_cb.clone();
         let selected_channel = self.selected_channel;
@@ -324,6 +332,7 @@ impl AudioRecorder {
                         audio_cb,
                         stop_flag,
                         stream_running_at,
+                        noise_suppression,
                     );
                     drop(stream);
                 }
@@ -609,6 +618,7 @@ mod tests {
                 None,
                 Arc::new(AtomicBool::new(false)),
                 Instant::now(),
+                false,
             );
             let _ = done_tx.send(());
         });
@@ -671,9 +681,22 @@ fn run_consumer(
     audio_cb: Option<AudioFrameCallback>,
     stop_flag: Arc<AtomicBool>,
     stream_running_at: Instant,
+    noise_suppression: bool,
 ) {
+    let mut noise_suppressor: Option<NoiseSuppressor> = if noise_suppression {
+        log::info!("Noise suppression enabled");
+        Some(NoiseSuppressor::new(in_sample_rate as usize))
+    } else {
+        None
+    };
+
+    let downstream_rate = noise_suppressor
+        .as_ref()
+        .map(|_| NoiseSuppressor::output_rate())
+        .unwrap_or(in_sample_rate as usize);
+
     let mut frame_resampler = FrameResampler::new(
-        in_sample_rate as usize,
+        downstream_rate,
         constants::WHISPER_SAMPLE_RATE as usize,
         Duration::from_millis(30),
     );
@@ -801,26 +824,9 @@ fn run_consumer(
                     // The chunk in hand arrived before the stop; it belongs to
                     // the recording, so feed it ahead of the drain below.
                     if let Some(AudioChunk::Samples(raw)) = pending.take() {
-                        frame_resampler.push(&raw, &mut |frame: &[f32]| {
-                            handle_frame(
-                                frame,
-                                true,
-                                vad_policy,
-                                &vad,
-                                &audio_cb,
-                                &mut processed_samples,
-                            )
-                        });
-                    }
-
-                    // Drain all remaining audio until the producer confirms end-of-stream.
-                    // The cpal callback sees the stop flag, sends EndOfStream, and goes
-                    // silent — guaranteeing every captured sample is in the channel
-                    // ahead of the sentinel.
-                    loop {
-                        match sample_rx.recv_timeout(Duration::from_secs(2)) {
-                            Ok(AudioChunk::Samples(remaining)) => {
-                                frame_resampler.push(&remaining, &mut |frame: &[f32]| {
+                        if let Some(ns) = &mut noise_suppressor {
+                            ns.push(&raw, &mut |denoised: &[f32]| {
+                                frame_resampler.push(denoised, &mut |frame: &[f32]| {
                                     handle_frame(
                                         frame,
                                         true,
@@ -830,6 +836,53 @@ fn run_consumer(
                                         &mut processed_samples,
                                     )
                                 });
+                            });
+                        } else {
+                            frame_resampler.push(&raw, &mut |frame: &[f32]| {
+                                handle_frame(
+                                    frame,
+                                    true,
+                                    vad_policy,
+                                    &vad,
+                                    &audio_cb,
+                                    &mut processed_samples,
+                                )
+                            });
+                        }
+                    }
+
+                    // Drain all remaining audio until the producer confirms end-of-stream.
+                    // The cpal callback sees the stop flag, sends EndOfStream, and goes
+                    // silent — guaranteeing every captured sample is in the channel
+                    // ahead of the sentinel.
+                    loop {
+                        match sample_rx.recv_timeout(Duration::from_secs(2)) {
+                            Ok(AudioChunk::Samples(remaining)) => {
+                                if let Some(ns) = &mut noise_suppressor {
+                                    ns.push(&remaining, &mut |denoised: &[f32]| {
+                                        frame_resampler.push(denoised, &mut |frame: &[f32]| {
+                                            handle_frame(
+                                                frame,
+                                                true,
+                                                vad_policy,
+                                                &vad,
+                                                &audio_cb,
+                                                &mut processed_samples,
+                                            )
+                                        });
+                                    });
+                                } else {
+                                    frame_resampler.push(&remaining, &mut |frame: &[f32]| {
+                                        handle_frame(
+                                            frame,
+                                            true,
+                                            vad_policy,
+                                            &vad,
+                                            &audio_cb,
+                                            &mut processed_samples,
+                                        )
+                                    });
+                                }
                             }
                             Ok(AudioChunk::EndOfStream) => break,
                             Err(_) => {
@@ -839,6 +892,20 @@ fn run_consumer(
                         }
                     }
 
+                    if let Some(ns) = &mut noise_suppressor {
+                        ns.finish(&mut |denoised: &[f32]| {
+                            frame_resampler.push(denoised, &mut |frame: &[f32]| {
+                                handle_frame(
+                                    frame,
+                                    true,
+                                    vad_policy,
+                                    &vad,
+                                    &audio_cb,
+                                    &mut processed_samples,
+                                )
+                            });
+                        });
+                    }
                     frame_resampler.finish(&mut |frame: &[f32]| {
                         handle_frame(
                             frame,
@@ -895,16 +962,31 @@ fn run_consumer(
                 }
             }
 
-            frame_resampler.push(&raw, &mut |frame: &[f32]| {
-                handle_frame(
-                    frame,
-                    recording,
-                    vad_policy,
-                    &vad,
-                    &audio_cb,
-                    &mut processed_samples,
-                )
-            });
+            if let Some(ns) = &mut noise_suppressor {
+                ns.push(&raw, &mut |denoised: &[f32]| {
+                    frame_resampler.push(denoised, &mut |frame: &[f32]| {
+                        handle_frame(
+                            frame,
+                            recording,
+                            vad_policy,
+                            &vad,
+                            &audio_cb,
+                            &mut processed_samples,
+                        )
+                    });
+                });
+            } else {
+                frame_resampler.push(&raw, &mut |frame: &[f32]| {
+                    handle_frame(
+                        frame,
+                        recording,
+                        vad_policy,
+                        &vad,
+                        &audio_cb,
+                        &mut processed_samples,
+                    )
+                });
+            }
         }
 
         if recording {

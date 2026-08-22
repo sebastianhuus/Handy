@@ -378,3 +378,20 @@ pub async fn set_selected_channel(app: AppHandle, channel: Option<u16>) -> Resul
     write_settings(&app, settings);
     Ok(())
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_noise_suppression(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = get_settings(&app);
+    settings.noise_suppression = enabled;
+    write_settings(&app, settings);
+
+    // The recorder bakes noise_suppression in at construction time, so drop and
+    // recreate it. Restarting cpal can block, so keep it off the webview/main
+    // run loop.
+    let manager = app.state::<Arc<AudioRecordingManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || manager.update_recorder())
+        .await
+        .map_err(|e| format!("audio task join failed: {e}"))?
+        .map_err(|e| format!("Failed to restart recorder: {e}"))
+}

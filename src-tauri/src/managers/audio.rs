@@ -296,8 +296,10 @@ fn create_audio_recorder(
     );
 
     // Recorder with VAD, a spectrum-level callback that forwards level updates to
-    // the frontend, and an audio-frame callback that feeds live streaming via a
-    // shared `StreamRouter` (captured directly, not via Tauri state — see its docs).
+    // the frontend, a noise-suppression toggle, and an audio-frame callback that
+    // feeds live streaming via a shared `StreamRouter` (captured directly, not via
+    // Tauri state — see its docs).
+    let settings = get_settings(app_handle);
     let recorder = AudioRecorder::new()
         .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
         .with_vad(
@@ -312,6 +314,7 @@ fn create_audio_recorder(
                 utils::emit_levels(&app_handle, &levels);
             }
         })
+        .with_noise_suppression(settings.noise_suppression)
         .with_audio_callback({
             let router = stream_router;
             move |frame| {
@@ -884,6 +887,29 @@ impl AudioRecordingManager {
             }
         }
         drop(state);
+        Ok(())
+    }
+
+    /// Drop and recreate the recorder so settings baked in at construction
+    /// time (e.g. noise_suppression) take effect on the next open.
+    pub fn update_recorder(&self) -> Result<(), anyhow::Error> {
+        let state = self.state.lock().unwrap();
+        if !matches!(*state, RecordingState::Idle) {
+            return Err(anyhow::anyhow!(
+                "Cannot change this setting while recording"
+            ));
+        }
+        drop(state);
+
+        let was_open = *self.is_open.lock().unwrap();
+        if was_open {
+            self.close_generation.fetch_add(1, Ordering::SeqCst);
+            self.stop_microphone_stream();
+        }
+        *self.recorder.lock().unwrap() = None;
+        if was_open {
+            self.start_microphone_stream()?;
+        }
         Ok(())
     }
 

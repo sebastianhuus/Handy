@@ -233,6 +233,10 @@
         "average": "Average all channels",
         "channel": "Channel {{n}}"
       },
+      "noiseSuppression": {
+        "label": "Noise Suppression",
+        "description": "Apply RNNoise to reduce background noise before transcription"
+      },
       "audioFeedback": {
         "label": "Audio Feedback",
         "description": "Play sound when recording starts and stops"
