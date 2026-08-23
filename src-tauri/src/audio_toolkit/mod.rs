@@ -13,8 +13,8 @@ pub use audio::{
 pub use lang_id::detect_output_language;
 pub use quote_cues::apply_quote_cues;
 pub use text::{
-    apply_correction_pairs, apply_custom_words, normalize_transcription_output,
-    remove_filler_words, OutputLanguageEvidence,
+    apply_correction_pairs, apply_custom_words, convert_number_words,
+    normalize_transcription_output, remove_filler_words, OutputLanguageEvidence,
 };
 pub use utils::get_cpal_host;
 pub use vad::{SileroVad, VoiceActivityDetector};

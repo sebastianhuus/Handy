@@ -130,6 +130,8 @@ const settingUpdaters: {
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   correction_pairs: (value) =>
     commands.updateCorrectionPairs(value as CorrectionPair[]),
+  convert_number_words: (value) =>
+    commands.setConvertNumberWords(value as boolean),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_delay_ms: (value) =>

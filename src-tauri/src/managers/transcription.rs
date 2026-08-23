@@ -1,6 +1,7 @@
 use crate::audio_toolkit::{
-    apply_correction_pairs, apply_custom_words, apply_quote_cues, detect_output_language,
-    normalize_transcription_output, remove_filler_words, OutputLanguageEvidence,
+    apply_correction_pairs, apply_custom_words, apply_quote_cues, convert_number_words,
+    detect_output_language, normalize_transcription_output, remove_filler_words,
+    OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -1778,6 +1779,13 @@ fn post_process_transcription_text(
 
         let corrected = if !settings.correction_pairs.is_empty() {
             apply_correction_pairs(&corrected, &settings.correction_pairs)
+        } else {
+            corrected
+        };
+
+        // Convert spoken number words to digit form
+        let corrected = if settings.convert_number_words {
+            convert_number_words(&corrected)
         } else {
             corrected
         };

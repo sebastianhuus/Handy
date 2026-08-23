@@ -38,3 +38,11 @@ pub fn unload_model_manually(
         .unload_model()
         .map_err(|e| format!("Failed to unload model: {}", e))
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_convert_number_words(app: AppHandle, enabled: bool) {
+    let mut settings = get_settings(&app);
+    settings.convert_number_words = enabled;
+    write_settings(&app, settings);
+}
