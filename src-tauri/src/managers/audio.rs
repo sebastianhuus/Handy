@@ -817,6 +817,16 @@ impl AudioRecordingManager {
                 return Err(msg);
             }
 
+            // Warn the user if they're recording in clamshell mode without a
+            // dedicated clamshell mic set — they're likely capturing from the
+            // built-in mic with the lid closed. `is_clamshell()` always
+            // returns `Ok(false)` on non-macOS, so this is a no-op elsewhere.
+            let settings = get_settings(&self.app_handle);
+            if settings.clamshell_microphone.is_none() && clamshell::is_clamshell().unwrap_or(false)
+            {
+                let _ = self.app_handle.emit("clamshell-warning", ());
+            }
+
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                 match rec.start(vad_policy) {
                     Ok(receiver) => {

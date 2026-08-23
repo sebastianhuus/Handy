@@ -9,7 +9,6 @@ import { RecordingBuffer } from "./RecordingBuffer";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { AlwaysOnMicrophone } from "../AlwaysOnMicrophone";
 import { SoundPicker } from "../SoundPicker";
-import { ClamshellMicrophoneSelector } from "../ClamshellMicrophoneSelector";
 import { UpdateChecksToggle } from "../UpdateChecksToggle";
 import { WhatsNewPreview } from "./WhatsNewPreview";
 import { KeyboardDiagnostic } from "./KeyboardDiagnostic";
@@ -39,7 +38,6 @@ export const DebugSettings: React.FC = () => {
         <ReliablePasteToggle descriptionMode="tooltip" grouped={true} />
         <RecordingBuffer descriptionMode="tooltip" grouped={true} />
         <AlwaysOnMicrophone descriptionMode="tooltip" grouped={true} />
-        <ClamshellMicrophoneSelector descriptionMode="tooltip" grouped={true} />
         <KeyboardDiagnostic />
         <LiveLogViewer descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>

@@ -96,30 +96,75 @@ fn build_console_filter() -> env_filter::Filter {
 }
 
 fn show_main_window(app: &AppHandle) {
-    if let Some(main_window) = app.get_webview_window("main") {
-        if let Err(e) = main_window.unminimize() {
-            log::error!("Failed to unminimize webview window: {}", e);
+    let Some(main_window) = app.get_webview_window("main") else {
+        let webview_labels = app.webview_windows().keys().cloned().collect::<Vec<_>>();
+        log::error!(
+            "Main window not found. Webview labels: {:?}",
+            webview_labels
+        );
+        return;
+    };
+
+    // Unminimize/show/set_focus, shared by both platform paths below.
+    let raise = {
+        let main_window = main_window.clone();
+        move || {
+            if let Err(e) = main_window.unminimize() {
+                log::error!("Failed to unminimize webview window: {}", e);
+            }
+            if let Err(e) = main_window.show() {
+                log::error!("Failed to show webview window: {}", e);
+            }
+            if let Err(e) = main_window.set_focus() {
+                log::error!("Failed to focus webview window: {}", e);
+            }
         }
-        if let Err(e) = main_window.show() {
-            log::error!("Failed to show webview window: {}", e);
-        }
-        if let Err(e) = main_window.set_focus() {
-            log::error!("Failed to focus webview window: {}", e);
-        }
-        #[cfg(target_os = "macos")]
-        {
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        // `show_main_window` is called both from main-thread contexts (tray/menu
+        // event callbacks) and from Tauri IPC commands, whose handlers run on a
+        // tokio worker thread, not the main thread — Tauri dispatches every
+        // command (sync or async) via `tokio::spawn`. AppKit calls require the
+        // main thread, so the whole sequence below is dispatched through
+        // `run_on_main_thread` unconditionally rather than relying on already
+        // being there; this also guarantees activation happens before
+        // unminimize/show/set_focus even when they end up queued together.
+        let app_for_activation = app.clone();
+        let result = app.run_on_main_thread(move || {
+            let app = app_for_activation;
+            // Switch to Regular policy so the app gets a dock tile and can
+            // receive focus like a normal foreground app.
             if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
                 log::error!("Failed to set activation policy to Regular: {}", e);
             }
+            // Force NSApp-level activation — without this, macOS focus-stealing
+            // protection keeps the window behind the currently active app even
+            // after show()/set_focus().
+            use objc2_app_kit::NSApplication;
+            use objc2_foundation::MainThreadMarker;
+            match MainThreadMarker::new() {
+                Some(mtm) => NSApplication::sharedApplication(mtm).activate(),
+                // Shouldn't happen inside a run_on_main_thread callback, but
+                // guard rather than assume.
+                None => {
+                    log::error!("run_on_main_thread callback unexpectedly not on the main thread")
+                }
+            }
+            raise();
+        });
+        if let Err(e) = result {
+            log::error!(
+                "Failed to dispatch show_main_window to the main thread: {}",
+                e
+            );
         }
         return;
     }
 
-    let webview_labels = app.webview_windows().keys().cloned().collect::<Vec<_>>();
-    log::error!(
-        "Main window not found. Webview labels: {:?}",
-        webview_labels
-    );
+    #[cfg(not(target_os = "macos"))]
+    raise();
 }
 
 #[allow(unused_variables)]

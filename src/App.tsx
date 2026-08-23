@@ -194,6 +194,20 @@ function App() {
     };
   }, [t]);
 
+  // Warn when recording starts in clamshell mode without a configured
+  // clamshell mic, and bring the window forward so the toast is visible.
+  useEffect(() => {
+    const unlisten = listen("clamshell-warning", async () => {
+      await commands.showMainWindowCommand();
+      toast.warning(t("warnings.clamshellMic.title"), {
+        description: t("warnings.clamshellMic.description"),
+      });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [t]);
+
   const revealMainWindowForPermissions = async () => {
     try {
       await commands.showMainWindowCommand();
