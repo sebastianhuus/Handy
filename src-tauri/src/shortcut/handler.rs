@@ -32,6 +32,15 @@ pub fn handle_shortcut_event(
     hotkey_string: &str,
     is_pressed: bool,
 ) {
+    // macOS Globe/Fn key taps trigger the system "Press Globe key to…"
+    // action (often "Change Input Source") at the HID layer, which we
+    // can't intercept without root. Arm a watcher that reverts any
+    // input-source change caused by the tap.
+    #[cfg(target_os = "macos")]
+    if crate::macos_input_source_guard::hotkey_contains_fn(hotkey_string) {
+        crate::macos_input_source_guard::arm(app);
+    }
+
     let settings = get_settings(app);
 
     // Transcribe bindings are handled by the coordinator.

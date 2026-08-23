@@ -1,6 +1,7 @@
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
 use log::{debug, error, warn};
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -9,6 +10,15 @@ use tauri::{AppHandle, Manager};
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
 const RELEASE_GRACE: Duration = Duration::from_millis(50);
+
+/// Minimum time a recording must run before a stop is honored. Without this,
+/// spamming a transcription hotkey starts and tears down CPAL mic streams
+/// faster than the audio pipeline can safely turn around, which has crashed
+/// the app. A stop requested earlier blocks the coordinator thread for the
+/// remainder of the window; events that queue up during the sleep are
+/// processed afterwards (and mostly dropped, since the stage has already
+/// moved to `Processing` by then).
+const MIN_RECORDING_DURATION: Duration = Duration::from_millis(150);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
@@ -40,8 +50,84 @@ enum Command {
 /// Pipeline lifecycle, owned exclusively by the coordinator thread.
 enum Stage {
     Idle,
-    Recording(String), // binding_id
+    /// Push-to-talk recording: only a release of the same `binding_id`
+    /// stops it. `started_at` feeds the `MIN_RECORDING_DURATION` guard.
+    Recording {
+        binding_id: String,
+        started_at: Instant,
+    },
+    /// Toggle recording — either started directly in toggle mode, or a PTT
+    /// recording that got upgraded by a same-order/any-order chord press
+    /// from another transcribe binding (see `classify_press`). Stops on the
+    /// next press of *any* transcribe binding, never on release. The stored
+    /// `binding_id` is always the one the audio manager actually started
+    /// under, which `AudioRecordingManager::stop_recording` requires to
+    /// match exactly.
+    RecordingToggle {
+        binding_id: String,
+        started_at: Instant,
+    },
     Processing,
+}
+
+/// Outcome of a transcribe-binding *press* event, decided from the current
+/// recording stage. Pure and AppHandle-free so it's unit testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PressOutcome {
+    /// Nothing is recording — begin a new recording under this binding.
+    Start,
+    /// A PTT recording from a *different* binding is in progress. handy-keys
+    /// dispatches chorded bindings order-independently, so pressing the
+    /// keys in either order can fire the shorter binding first and the
+    /// longer one second (or vice versa). Upgrade to toggle mode so the
+    /// first binding's key-release no longer stops it — only an explicit
+    /// stop press (from any transcribe binding) will now end it.
+    UpgradeToToggle,
+    /// A toggle recording (native or upgraded) is active. Any transcribe
+    /// binding press — matching or not — stops it.
+    CrossBindingStop,
+    /// Pipeline busy (mid-processing) or a redundant same-binding PTT
+    /// re-press while already recording; nothing to do.
+    Ignore,
+}
+
+/// Decide what an `is_pressed` transcribe event should do.
+///
+/// `active` is `Some((active_binding_id, is_toggle))` describing the
+/// in-progress recording, or `None` when idle. `busy` is true while the
+/// pipeline is finishing a previous transcription and must ignore input.
+fn classify_press(
+    push_to_talk: bool,
+    binding_id: &str,
+    active: Option<(&str, bool)>,
+    busy: bool,
+) -> PressOutcome {
+    if busy {
+        return PressOutcome::Ignore;
+    }
+
+    match active {
+        None => PressOutcome::Start,
+        Some((_, true)) => PressOutcome::CrossBindingStop,
+        Some((active_id, false)) => {
+            if push_to_talk && active_id != binding_id {
+                PressOutcome::UpgradeToToggle
+            } else {
+                PressOutcome::Ignore
+            }
+        }
+    }
+}
+
+/// Block the coordinator thread until the active recording has run for at
+/// least `MIN_RECORDING_DURATION`. See the constant's doc comment.
+fn enforce_min_duration(started_at: Instant) {
+    let elapsed = started_at.elapsed();
+    if elapsed < MIN_RECORDING_DURATION {
+        let remaining = MIN_RECORDING_DURATION - elapsed;
+        debug!("Recording too short ({elapsed:?}); waiting {remaining:?} before stop");
+        thread::sleep(remaining);
+    }
 }
 
 fn classify_ptt_event(
@@ -86,7 +172,11 @@ impl TranscriptionCoordinator {
         thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut stage = Stage::Idle;
-                let mut last_press: Option<Instant> = None;
+                // Debounce is per-binding: a single global timestamp would also
+                // suppress a *different* binding's press that fires within the
+                // debounce window of the first, which happens routinely for a
+                // fast any-order chord (e.g. fn then ctrl+fn a few ms apart).
+                let mut last_press: HashMap<String, Instant> = HashMap::new();
                 let mut pending_release: Option<PendingRelease> = None;
 
                 loop {
@@ -97,14 +187,21 @@ impl TranscriptionCoordinator {
                             Ok(cmd) => cmd,
                             Err(mpsc::RecvTimeoutError::Timeout) => {
                                 if let Some(pending) = pending_release.take() {
-                                    if matches!(&stage, Stage::Recording(id) if id == &pending.binding_id)
+                                    if let Stage::Recording {
+                                        binding_id: id,
+                                        started_at,
+                                    } = &stage
                                     {
-                                        stop(
-                                            &app,
-                                            &mut stage,
-                                            &pending.binding_id,
-                                            &pending.hotkey_string,
-                                        );
+                                        if id == &pending.binding_id {
+                                            let started_at = *started_at;
+                                            enforce_min_duration(started_at);
+                                            stop(
+                                                &app,
+                                                &mut stage,
+                                                &pending.binding_id,
+                                                &pending.hotkey_string,
+                                            );
+                                        }
                                     }
                                 }
                                 continue;
@@ -128,8 +225,13 @@ impl TranscriptionCoordinator {
                             let pending_release_binding = pending_release
                                 .as_ref()
                                 .map(|pending| pending.binding_id.as_str());
+                            // Only a PTT `Recording` stage participates in the
+                            // auto-repeat defer/cancel dance; `RecordingToggle`
+                            // (native toggle, or a PTT recording upgraded by an
+                            // any-order chord press) ignores key-ups entirely, so
+                            // it must never report a `recording_binding` here.
                             let recording_binding = match &stage {
-                                Stage::Recording(id) => Some(id.as_str()),
+                                Stage::Recording { binding_id: id, .. } => Some(id.as_str()),
                                 _ => None,
                             };
 
@@ -155,35 +257,118 @@ impl TranscriptionCoordinator {
                                 PttAction::Passthrough => {}
                             }
 
-                            // Debounce rapid-fire press events (key repeat / double-tap).
-                            // Push-to-talk releases may be deferred above to absorb X11 auto-repeat.
+                            // Debounce rapid-fire press events (key repeat / double-tap)
+                            // per binding. Push-to-talk releases may be deferred above
+                            // to absorb X11 auto-repeat.
                             if is_pressed {
                                 let now = Instant::now();
-                                if last_press.is_some_and(|t| now.duration_since(t) < DEBOUNCE) {
+                                if last_press
+                                    .get(&binding_id)
+                                    .is_some_and(|t| now.duration_since(*t) < DEBOUNCE)
+                                {
                                     debug!("Debounced press for '{binding_id}'");
                                     continue;
                                 }
-                                last_press = Some(now);
+                                last_press.insert(binding_id.clone(), now);
                             }
 
                             if push_to_talk {
-                                if is_pressed && matches!(stage, Stage::Idle) {
-                                    start(&app, &mut stage, &binding_id, &hotkey_string);
-                                } else if !is_pressed
-                                    && matches!(&stage, Stage::Recording(id) if id == &binding_id)
-                                {
-                                    stop(&app, &mut stage, &binding_id, &hotkey_string);
-                                }
-                            } else if is_pressed {
-                                match &stage {
-                                    Stage::Idle => {
-                                        start(&app, &mut stage, &binding_id, &hotkey_string);
+                                if is_pressed {
+                                    let active = match &stage {
+                                        Stage::Recording { binding_id: id, .. } => {
+                                            Some((id.as_str(), false))
+                                        }
+                                        Stage::RecordingToggle { binding_id: id, .. } => {
+                                            Some((id.as_str(), true))
+                                        }
+                                        _ => None,
+                                    };
+                                    let busy = matches!(stage, Stage::Processing);
+                                    match classify_press(push_to_talk, &binding_id, active, busy) {
+                                        PressOutcome::Start => {
+                                            start(
+                                                &app,
+                                                &mut stage,
+                                                &binding_id,
+                                                &hotkey_string,
+                                                true,
+                                            );
+                                        }
+                                        PressOutcome::UpgradeToToggle => {
+                                            if let Stage::Recording {
+                                                binding_id: active_id,
+                                                started_at,
+                                            } = &stage
+                                            {
+                                                let active_id = active_id.clone();
+                                                let started_at = *started_at;
+                                                debug!(
+                                                    "PTT '{active_id}' upgraded to toggle mode by '{binding_id}'"
+                                                );
+                                                stage = Stage::RecordingToggle {
+                                                    binding_id: active_id,
+                                                    started_at,
+                                                };
+                                            }
+                                        }
+                                        PressOutcome::CrossBindingStop => {
+                                            if let Stage::RecordingToggle {
+                                                binding_id: active_id,
+                                                started_at,
+                                            } = &stage
+                                            {
+                                                let active_id = active_id.clone();
+                                                let started_at = *started_at;
+                                                enforce_min_duration(started_at);
+                                                stop(&app, &mut stage, &active_id, &hotkey_string);
+                                            }
+                                        }
+                                        PressOutcome::Ignore => {
+                                            debug!("Ignoring PTT press for '{binding_id}'");
+                                        }
                                     }
-                                    Stage::Recording(id) if id == &binding_id => {
+                                } else if let Stage::Recording {
+                                    binding_id: id,
+                                    started_at,
+                                } = &stage
+                                {
+                                    // Key-up only ever stops the matching PTT
+                                    // binding; RecordingToggle ignores key-ups.
+                                    if id == &binding_id {
+                                        let started_at = *started_at;
+                                        enforce_min_duration(started_at);
                                         stop(&app, &mut stage, &binding_id, &hotkey_string);
                                     }
-                                    _ => {
-                                        debug!("Ignoring press for '{binding_id}': pipeline busy")
+                                }
+                            } else if is_pressed {
+                                let active = match &stage {
+                                    Stage::RecordingToggle { binding_id: id, .. } => {
+                                        Some((id.as_str(), true))
+                                    }
+                                    Stage::Recording { binding_id: id, .. } => {
+                                        Some((id.as_str(), false))
+                                    }
+                                    _ => None,
+                                };
+                                let busy = matches!(stage, Stage::Processing);
+                                match classify_press(push_to_talk, &binding_id, active, busy) {
+                                    PressOutcome::Start => {
+                                        start(&app, &mut stage, &binding_id, &hotkey_string, false);
+                                    }
+                                    PressOutcome::CrossBindingStop => {
+                                        if let Stage::RecordingToggle {
+                                            binding_id: active_id,
+                                            started_at,
+                                        } = &stage
+                                        {
+                                            let active_id = active_id.clone();
+                                            let started_at = *started_at;
+                                            enforce_min_duration(started_at);
+                                            stop(&app, &mut stage, &active_id, &hotkey_string);
+                                        }
+                                    }
+                                    PressOutcome::UpgradeToToggle | PressOutcome::Ignore => {
+                                        debug!("Ignoring press for '{binding_id}': pipeline busy");
                                     }
                                 }
                             }
@@ -194,7 +379,11 @@ impl TranscriptionCoordinator {
                             pending_release = None;
                             // Don't reset during processing — wait for the pipeline to finish.
                             if !matches!(stage, Stage::Processing)
-                                && (recording_was_active || matches!(stage, Stage::Recording(_)))
+                                && (recording_was_active
+                                    || matches!(
+                                        stage,
+                                        Stage::Recording { .. } | Stage::RecordingToggle { .. }
+                                    ))
                             {
                                 stage = Stage::Idle;
                             }
@@ -256,7 +445,7 @@ impl TranscriptionCoordinator {
     }
 }
 
-fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
+fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str, is_ptt: bool) {
     let Some(action) = ACTION_MAP.get(binding_id) else {
         warn!("No action in ACTION_MAP for '{binding_id}'");
         return;
@@ -266,7 +455,19 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         .try_state::<Arc<AudioRecordingManager>>()
         .is_some_and(|a| a.is_recording())
     {
-        *stage = Stage::Recording(binding_id.to_string());
+        let binding_id = binding_id.to_string();
+        let started_at = Instant::now();
+        *stage = if is_ptt {
+            Stage::Recording {
+                binding_id,
+                started_at,
+            }
+        } else {
+            Stage::RecordingToggle {
+                binding_id,
+                started_at,
+            }
+        };
     } else {
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
     }
@@ -284,6 +485,156 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------
+    // classify_press: any-order chord activation + cross-binding stop.
+    //
+    // Coverage for the sh-branch-2 (#5) port: PTT and toggle bindings that
+    // share keys (e.g. "fn" and "ctrl+fn") must interact correctly
+    // regardless of which one's hotkey fires first, and any transcribe
+    // binding's press must be able to stop an active toggle recording.
+    // -----------------------------------------------------------------
+
+    const TRANSCRIBE: &str = "transcribe";
+    const TRANSCRIBE_PP: &str = "transcribe_with_post_process";
+
+    #[test]
+    fn classify_press_starts_from_idle_in_either_mode() {
+        assert_eq!(
+            classify_press(true, TRANSCRIBE, None, false),
+            PressOutcome::Start
+        );
+        assert_eq!(
+            classify_press(false, TRANSCRIBE, None, false),
+            PressOutcome::Start
+        );
+    }
+
+    #[test]
+    fn classify_press_ignores_everything_while_pipeline_busy() {
+        assert_eq!(
+            classify_press(true, TRANSCRIBE, None, true),
+            PressOutcome::Ignore
+        );
+        assert_eq!(
+            classify_press(false, TRANSCRIBE, Some((TRANSCRIBE, true)), true),
+            PressOutcome::Ignore
+        );
+    }
+
+    #[test]
+    fn classify_press_ignores_redundant_same_binding_ptt_repress() {
+        // Same PTT binding fires again while already recording (e.g. a
+        // debounce-adjacent repeat) — its own release still stops it, so
+        // there's nothing to do here.
+        assert_eq!(
+            classify_press(true, TRANSCRIBE, Some((TRANSCRIBE, false)), false),
+            PressOutcome::Ignore
+        );
+    }
+
+    #[test]
+    fn classify_press_upgrades_ptt_to_toggle_regardless_of_chord_order() {
+        // fn (transcribe) fires first as PTT; ctrl+fn (transcribe_with_post_process)
+        // follows while it's still held.
+        assert_eq!(
+            classify_press(true, TRANSCRIBE_PP, Some((TRANSCRIBE, false)), false),
+            PressOutcome::UpgradeToToggle
+        );
+        // The reverse physical order — ctrl+fn's binding fires first, then fn's —
+        // must upgrade identically. Any-order means neither binding is "the"
+        // canonical starter.
+        assert_eq!(
+            classify_press(true, TRANSCRIBE, Some((TRANSCRIBE_PP, false)), false),
+            PressOutcome::UpgradeToToggle
+        );
+    }
+
+    #[test]
+    fn classify_press_does_not_upgrade_outside_push_to_talk() {
+        // In toggle mode a recording is always native RecordingToggle
+        // (is_toggle = true), never PTT `Recording`, so this combination
+        // shouldn't arise in practice — but if it did, non-PTT sessions
+        // must never upgrade (there's nothing to upgrade *from*).
+        assert_eq!(
+            classify_press(false, TRANSCRIBE_PP, Some((TRANSCRIBE, false)), false),
+            PressOutcome::Ignore
+        );
+    }
+
+    #[test]
+    fn classify_press_cross_binding_stop_while_toggling() {
+        // A different binding's press stops an active toggle recording...
+        assert_eq!(
+            classify_press(false, TRANSCRIBE_PP, Some((TRANSCRIBE, true)), false),
+            PressOutcome::CrossBindingStop
+        );
+        // ...and so does the same binding pressed again (classic toggle-off).
+        assert_eq!(
+            classify_press(false, TRANSCRIBE, Some((TRANSCRIBE, true)), false),
+            PressOutcome::CrossBindingStop
+        );
+    }
+
+    #[test]
+    fn classify_press_cross_binding_stop_after_ptt_upgrade() {
+        // Once a PTT recording has been upgraded to toggle mode, ANY
+        // transcribe binding press stops it — including a third binding
+        // that was never involved in starting it.
+        assert_eq!(
+            classify_press(
+                true,
+                "some_other_transcribe_binding",
+                Some((TRANSCRIBE_PP, true)),
+                false
+            ),
+            PressOutcome::CrossBindingStop
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // enforce_min_duration: MIN_RECORDING_DURATION guard.
+    //
+    // Spamming a transcription hotkey was crashing the app via rapid CPAL
+    // mic stream open/close cycles; a stop requested too soon after start
+    // must be deferred until the window elapses, and must not delay a stop
+    // that already satisfies it.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn enforce_min_duration_defers_a_stop_requested_immediately_after_start() {
+        let started_at = Instant::now();
+        let before = Instant::now();
+        enforce_min_duration(started_at);
+        let waited = before.elapsed();
+
+        // Allow a little slack for scheduler jitter, but it must have
+        // waited most of the window — proving the early stop was deferred
+        // rather than honored immediately.
+        assert!(
+            waited >= MIN_RECORDING_DURATION.saturating_sub(Duration::from_millis(20)),
+            "expected an early stop to be deferred close to {MIN_RECORDING_DURATION:?}, only waited {waited:?}"
+        );
+        // And that the deferred stop does eventually return (fire) rather
+        // than block forever.
+        assert!(
+            waited < MIN_RECORDING_DURATION + Duration::from_millis(500),
+            "deferred stop should fire shortly after the window elapses, waited {waited:?}"
+        );
+    }
+
+    #[test]
+    fn enforce_min_duration_does_not_delay_a_stop_after_window_elapsed() {
+        let started_at = Instant::now() - MIN_RECORDING_DURATION - Duration::from_millis(50);
+        let before = Instant::now();
+        enforce_min_duration(started_at);
+        let waited = before.elapsed();
+
+        assert!(
+            waited < Duration::from_millis(20),
+            "a stop requested after MIN_RECORDING_DURATION already elapsed must not block, waited {waited:?}"
+        );
+    }
 
     #[test]
     fn push_to_talk_release_while_recording_defers_release() {

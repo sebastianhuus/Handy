@@ -11,6 +11,7 @@ import { commands } from "@/bindings";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { SECURE_INPUT_HELP_URL } from "../SecureInputWarning";
+import { maybeWarnAboutGlobeKey } from "../../lib/utils/globeKeyWarning";
 
 interface HandyKeysShortcutInputProps {
   descriptionMode?: "inline" | "tooltip";
@@ -107,6 +108,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
         } else {
           try {
             await addBinding(shortcutId, keysToCommit);
+            maybeWarnAboutGlobeKey(keysToCommit, t).catch(console.error);
           } catch (error) {
             console.error("Failed to add binding:", error);
             toast.error(
