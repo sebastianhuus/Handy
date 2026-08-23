@@ -61,6 +61,26 @@ struct TranscribeAction {
 /// Field name for structured output JSON schema
 const TRANSCRIPTION_FIELD: &str = "transcription";
 
+/// If `text` ends with a recognized keyword action phrase, strips the phrase and
+/// returns `(cleaned_text, true)`. Only matches at the end so mid-sentence uses
+/// are treated as normal dictation. Trailing punctuation is ignored when matching.
+fn strip_keyword_action(text: &str) -> (String, bool) {
+    let trimmed = text.trim_end();
+    let without_punct = trimmed
+        .trim_end_matches(['.', '!', '?', ',', ';', ':'])
+        .trim_end();
+    let lower = without_punct.to_lowercase();
+
+    if lower.ends_with("press enter") {
+        let prefix_len = without_punct.len() - "press enter".len();
+        let remaining =
+            without_punct[..prefix_len].trim_end_matches(|c: char| c.is_whitespace() || c == ',');
+        (remaining.to_string(), true)
+    } else {
+        (text.to_string(), false)
+    }
+}
+
 /// Strip invisible Unicode characters that some LLMs may insert
 fn strip_invisible_chars(s: &str) -> String {
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
@@ -774,7 +794,7 @@ impl ShortcutAction for TranscribeAction {
                                     show_processing_overlay(&ah);
                                 }
                             }
-                            let Some(processed) = complete_unless_cancelled(
+                            let Some(mut processed) = complete_unless_cancelled(
                                 process_transcription_output(&ah, &transcription, post_process),
                                 || rm.was_cancelled_since(cancel_generation),
                             )
@@ -792,6 +812,21 @@ impl ShortcutAction for TranscribeAction {
                                 change_tray_icon(&ah, TrayIconState::Idle);
                                 return;
                             }
+
+                            // Strip keyword action phrases before history save and paste
+                            let kw_settings = get_settings(&ah);
+                            let press_enter = if kw_settings.keyword_actions_enabled {
+                                let (clean, flag) = strip_keyword_action(&processed.final_text);
+                                if flag {
+                                    processed.post_processed_text = processed
+                                        .post_processed_text
+                                        .map(|pp| strip_keyword_action(&pp).0);
+                                    processed.final_text = clean;
+                                }
+                                flag
+                            } else {
+                                false
+                            };
 
                             // Save to history if WAV was saved
                             if wav_saved {
@@ -823,10 +858,22 @@ impl ShortcutAction for TranscribeAction {
                                     }
 
                                     match utils::paste(final_text, ah_clone.clone()) {
-                                        Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        ),
+                                        Ok(()) => {
+                                            debug!(
+                                                "Text pasted successfully in {:?}",
+                                                paste_time.elapsed()
+                                            );
+                                            if press_enter {
+                                                if let Err(e) =
+                                                    crate::clipboard::press_enter_key(&ah_clone)
+                                                {
+                                                    error!(
+                                                        "Failed to press Enter after paste: {}",
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
                                         Err(e) => {
                                             error!("Failed to paste transcription: {}", e);
                                             let _ = ah_clone.emit("paste-error", ());
@@ -953,7 +1000,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 mod tests {
     use super::{
         complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
-        strip_think_block,
+        strip_keyword_action, strip_think_block,
     };
     use crate::settings::OverlayStyle;
     use std::future;
@@ -961,6 +1008,41 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn strip_keyword_action_matches_trailing_press_enter() {
+        let (clean, flag) = strip_keyword_action("send this message press enter");
+        assert!(flag);
+        assert_eq!(clean, "send this message");
+    }
+
+    #[test]
+    fn strip_keyword_action_ignores_trailing_punctuation() {
+        let (clean, flag) = strip_keyword_action("send this message, press enter.");
+        assert!(flag);
+        assert_eq!(clean, "send this message");
+    }
+
+    #[test]
+    fn strip_keyword_action_is_case_insensitive() {
+        let (clean, flag) = strip_keyword_action("send this message Press Enter");
+        assert!(flag);
+        assert_eq!(clean, "send this message");
+    }
+
+    #[test]
+    fn strip_keyword_action_leaves_mid_sentence_uses_untouched() {
+        let (clean, flag) = strip_keyword_action("press enter to continue reading");
+        assert!(!flag);
+        assert_eq!(clean, "press enter to continue reading");
+    }
+
+    #[test]
+    fn strip_keyword_action_leaves_text_without_the_phrase_untouched() {
+        let (clean, flag) = strip_keyword_action("just a normal dictation");
+        assert!(!flag);
+        assert_eq!(clean, "just a normal dictation");
+    }
 
     #[test]
     fn blank_transcription_is_detected() {

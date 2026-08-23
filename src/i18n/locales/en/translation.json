@@ -166,6 +166,9 @@
         "loading": "Loading shortcuts...",
         "none": "No shortcuts configured",
         "notFound": "Shortcut not found",
+        "notSet": "No hotkey",
+        "add": "+ Add",
+        "remove": "Remove",
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
@@ -184,7 +187,8 @@
         "errors": {
           "restore": "Failed to restore original shortcut",
           "set": "Failed to set shortcut: {{error}}",
-          "reset": "Failed to reset shortcut to original value"
+          "reset": "Failed to reset shortcut to original value",
+          "duplicate": "{{shortcut}} is already assigned to {{name}}"
         }
       },
       "language": {
@@ -271,6 +275,10 @@
       "lazyStreamClose": {
         "label": "Keep Mic Open Between Transcriptions",
         "description": "Keeps the microphone stream open for 30 seconds after recording stops, reducing latency for back-to-back transcriptions. May degrade Bluetooth audio quality while active."
+      },
+      "keywordActions": {
+        "label": "Voice Keyword Actions",
+        "description": "Say \"press enter\" at the end of a dictation to press Enter after pasting"
       },
       "acceleration": {
         "transcribe": {

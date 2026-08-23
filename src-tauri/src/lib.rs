@@ -615,7 +615,9 @@ pub fn run(cli_args: CliArgs) {
 
     let specta_builder = Builder::<tauri::Wry>::new()
         .commands(collect_commands![
-            shortcut::change_binding,
+            shortcut::add_binding,
+            shortcut::remove_binding,
+            shortcut::clear_binding,
             shortcut::reset_binding,
             shortcut::change_ptt_setting,
             shortcut::change_audio_feedback_setting,
@@ -661,6 +663,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
             shortcut::change_log_transcriptions_setting,
+            shortcut::change_keyword_actions_enabled_setting,
             shortcut::change_filler_word_removal_enabled_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,

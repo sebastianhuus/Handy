@@ -23,8 +23,10 @@ interface UseSettingsReturn {
   refreshOutputDevices: () => Promise<void>;
 
   // Binding-specific actions
-  updateBinding: (id: string, binding: string) => Promise<void>;
+  addBinding: (id: string, binding: string) => Promise<void>;
+  removeBinding: (id: string, binding: string) => Promise<void>;
   resetBinding: (id: string) => Promise<void>;
+  clearBinding: (id: string) => Promise<void>;
 
   // Convenience getters
   getSetting: <K extends keyof Settings>(key: K) => Settings[K] | undefined;
@@ -66,8 +68,10 @@ export const useSettings = (): UseSettingsReturn => {
     refreshSettings: store.refreshSettings,
     refreshAudioDevices: store.refreshAudioDevices,
     refreshOutputDevices: store.refreshOutputDevices,
-    updateBinding: store.updateBinding,
+    addBinding: store.addBinding,
+    removeBinding: store.removeBinding,
     resetBinding: store.resetBinding,
+    clearBinding: store.clearBinding,
     getSetting: store.getSetting,
     setPostProcessProvider: store.setPostProcessProvider,
     updatePostProcessBaseUrl: store.updatePostProcessBaseUrl,

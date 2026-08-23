@@ -5,9 +5,25 @@
 
 
 export const commands = {
-async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
+async addBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
+    return { status: "ok", data: await TAURI_INVOKE("add_binding", { id, binding }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_binding", { id, binding }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async clearBinding(id: string) : Promise<Result<BindingResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("clear_binding", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -370,6 +386,14 @@ async changeVadEnabledSetting(enabled: boolean) : Promise<Result<null, string>> 
 async changeLogTranscriptionsSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_log_transcriptions_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeKeywordActionsEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_keyword_actions_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1000,7 +1024,7 @@ reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: strin
  * `device_id` when available (or its name for backends such as Metal),
  * never from the process-local device registry index.
  */
-transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; noise_suppression?: boolean; log_transcriptions?: boolean; vad_enabled?: boolean;
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; noise_suppression?: boolean; keyword_actions_enabled?: boolean; log_transcriptions?: boolean; vad_enabled?: boolean;
 /**
  * Which recording overlay to show: None / Minimal / Live. Streaming mode is
  * not gated on this — that follows model capability. Migrated from the old
@@ -1114,7 +1138,7 @@ uncovered_bindings: string[];
  * warning banner appears and explains why recording refused.
  */
 recorder_blocked: boolean }
-export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_bindings: string[] }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.

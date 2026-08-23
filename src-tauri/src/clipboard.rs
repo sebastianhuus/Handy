@@ -28,6 +28,20 @@ fn with_enigo<T>(
     f(&mut enigo)
 }
 
+/// Press and release Return via the managed Enigo instance. Used by the
+/// keyword-actions feature to submit a dictation after paste when the
+/// transcript ends with a recognized "press enter" phrase.
+pub fn press_enter_key(app_handle: &AppHandle) -> Result<(), String> {
+    with_enigo(app_handle, |enigo| {
+        enigo
+            .key(Key::Return, Direction::Press)
+            .map_err(|e| format!("Failed to press Return key: {}", e))?;
+        enigo
+            .key(Key::Return, Direction::Release)
+            .map_err(|e| format!("Failed to release Return key: {}", e))
+    })
+}
+
 fn write_text_to_clipboard(app_handle: &AppHandle, text: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     if is_wayland() && is_wl_copy_available() {

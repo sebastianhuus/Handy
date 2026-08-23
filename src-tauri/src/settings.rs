@@ -77,13 +77,50 @@ impl From<LogLevel> for tauri_plugin_log::LogLevel {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[derive(Serialize, Debug, Clone, Type)]
 pub struct ShortcutBinding {
     pub id: String,
     pub name: String,
     pub description: String,
     pub default_binding: String,
-    pub current_binding: String,
+    pub current_bindings: Vec<String>,
+}
+
+// Custom deserializer to accept the legacy `current_binding: String` shape
+// from older persisted settings as well as the new `current_bindings: Vec<String>`.
+impl<'de> Deserialize<'de> for ShortcutBinding {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            id: String,
+            name: String,
+            description: String,
+            #[serde(default)]
+            default_binding: String,
+            #[serde(default)]
+            current_binding: Option<String>,
+            #[serde(default)]
+            current_bindings: Option<Vec<String>>,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+        let current_bindings = match (raw.current_bindings, raw.current_binding) {
+            (Some(v), _) => v.into_iter().filter(|s| !s.trim().is_empty()).collect(),
+            (None, Some(s)) if !s.trim().is_empty() => vec![s],
+            _ => Vec::new(),
+        };
+
+        Ok(ShortcutBinding {
+            id: raw.id,
+            name: raw.name,
+            description: raw.description,
+            default_binding: raw.default_binding,
+            current_bindings,
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
@@ -487,6 +524,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub noise_suppression: bool,
     #[serde(default)]
+    pub keyword_actions_enabled: bool,
+    #[serde(default)]
     pub log_transcriptions: bool,
     #[serde(default = "default_vad_enabled")]
     pub vad_enabled: bool,
@@ -854,7 +893,7 @@ pub fn get_default_settings() -> AppSettings {
             name: "Transcribe".to_string(),
             description: "Converts your speech into text.".to_string(),
             default_binding: default_shortcut.to_string(),
-            current_binding: default_shortcut.to_string(),
+            current_bindings: vec![default_shortcut.to_string()],
         },
     );
     #[cfg(target_os = "windows")]
@@ -874,7 +913,7 @@ pub fn get_default_settings() -> AppSettings {
             description: "Converts your speech into text and applies AI post-processing."
                 .to_string(),
             default_binding: default_post_process_shortcut.to_string(),
-            current_binding: default_post_process_shortcut.to_string(),
+            current_bindings: vec![default_post_process_shortcut.to_string()],
         },
     );
     bindings.insert(
@@ -884,7 +923,7 @@ pub fn get_default_settings() -> AppSettings {
             name: "Cancel".to_string(),
             description: "Cancels the current recording.".to_string(),
             default_binding: "escape".to_string(),
-            current_binding: "escape".to_string(),
+            current_bindings: vec!["escape".to_string()],
         },
     );
 
@@ -950,6 +989,7 @@ pub fn get_default_settings() -> AppSettings {
         transcribe_gpu_device: default_transcribe_gpu_device(),
         extra_recording_buffer_ms: 0,
         noise_suppression: false,
+        keyword_actions_enabled: false,
         log_transcriptions: false,
         vad_enabled: default_vad_enabled(),
         overlay_style: default_overlay_style(),
@@ -1321,7 +1361,10 @@ mod tests {
             .expect("a stored v0.9.0 settings object must keep parsing strictly");
 
         assert_eq!(settings.selected_model, "whisper-large-v3-turbo");
-        assert_eq!(settings.bindings["transcribe"].current_binding, "f13");
+        assert_eq!(
+            settings.bindings["transcribe"].current_bindings,
+            vec!["f13".to_string()]
+        );
         assert_eq!(settings.log_level, LogLevel::Debug);
         assert_eq!(settings.sound_theme, SoundTheme::Pop);
         assert!(settings.filler_word_removal_enabled);
@@ -1352,7 +1395,7 @@ mod tests {
         // An enum variant this build doesn't know, e.g. written by a newer
         // version before a downgrade.
         map.insert("sound_theme".into(), serde_json::json!("theremin"));
-        stored["bindings"]["transcribe"]["current_binding"] = serde_json::json!("f13");
+        stored["bindings"]["transcribe"]["current_bindings"] = serde_json::json!(["f13"]);
 
         // Precondition: this is exactly the whole-store parse failure from
         // #1619 that used to reset everything to defaults.
@@ -1361,7 +1404,10 @@ mod tests {
         let salvaged = salvage_settings(&stored);
         assert_eq!(salvaged.selected_model, "parakeet-tdt-0.6b-v3");
         assert!(salvaged.onboarding_completed);
-        assert_eq!(salvaged.bindings["transcribe"].current_binding, "f13");
+        assert_eq!(
+            salvaged.bindings["transcribe"].current_bindings,
+            vec!["f13".to_string()]
+        );
         assert_eq!(salvaged.sound_theme, default_sound_theme());
     }
 
@@ -1399,8 +1445,8 @@ mod tests {
         assert_eq!(salvaged.selected_model, "whisper-small");
         let defaults = get_default_settings();
         assert_eq!(
-            salvaged.bindings["transcribe"].current_binding,
-            defaults.bindings["transcribe"].current_binding
+            salvaged.bindings["transcribe"].current_bindings,
+            defaults.bindings["transcribe"].current_bindings
         );
     }
 
@@ -1433,6 +1479,57 @@ mod tests {
                 default_settings_json()
             );
         }
+    }
+
+    #[test]
+    fn shortcut_binding_deserializes_new_vec_shape() {
+        let raw = serde_json::json!({
+            "id": "transcribe",
+            "name": "Transcribe",
+            "description": "desc",
+            "default_binding": "option+space",
+            "current_bindings": ["option+space", "f13"]
+        });
+        let binding: ShortcutBinding = serde_json::from_value(raw).unwrap();
+        assert_eq!(
+            binding.current_bindings,
+            vec!["option+space".to_string(), "f13".to_string()]
+        );
+    }
+
+    #[test]
+    fn shortcut_binding_deserializes_legacy_single_string_shape() {
+        let raw = serde_json::json!({
+            "id": "transcribe",
+            "name": "Transcribe",
+            "description": "desc",
+            "default_binding": "option+space",
+            "current_binding": "f13"
+        });
+        let binding: ShortcutBinding = serde_json::from_value(raw).unwrap();
+        assert_eq!(binding.current_bindings, vec!["f13".to_string()]);
+    }
+
+    #[test]
+    fn shortcut_binding_deserializes_missing_and_empty_bindings_to_empty_vec() {
+        let raw = serde_json::json!({
+            "id": "cancel",
+            "name": "Cancel",
+            "description": "desc",
+            "default_binding": "escape"
+        });
+        let binding: ShortcutBinding = serde_json::from_value(raw).unwrap();
+        assert!(binding.current_bindings.is_empty());
+
+        let raw_empty_string = serde_json::json!({
+            "id": "cancel",
+            "name": "Cancel",
+            "description": "desc",
+            "default_binding": "escape",
+            "current_binding": ""
+        });
+        let binding: ShortcutBinding = serde_json::from_value(raw_empty_string).unwrap();
+        assert!(binding.current_bindings.is_empty());
     }
 
     #[test]

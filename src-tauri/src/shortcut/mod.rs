@@ -108,124 +108,225 @@ pub struct BindingResponse {
     error: Option<String>,
 }
 
+/// Register a single hotkey using the active keyboard implementation.
+fn register_hotkey_for_active_impl(
+    app: &AppHandle,
+    binding_id: &str,
+    hotkey_string: &str,
+) -> Result<(), String> {
+    let settings = get_settings(app);
+    match settings.keyboard_implementation {
+        KeyboardImplementation::Tauri => {
+            tauri_impl::register_hotkey(app, binding_id, hotkey_string)
+        }
+        KeyboardImplementation::HandyKeys => app
+            .try_state::<handy_keys::HandyKeysState>()
+            .ok_or_else(|| "HandyKeysState not initialized".to_string())?
+            .register_hotkey(binding_id, hotkey_string),
+    }
+}
+
+/// Unregister a single hotkey using the active keyboard implementation.
+fn unregister_hotkey_for_active_impl(
+    app: &AppHandle,
+    binding_id: &str,
+    hotkey_string: &str,
+) -> Result<(), String> {
+    let settings = get_settings(app);
+    match settings.keyboard_implementation {
+        KeyboardImplementation::Tauri => tauri_impl::unregister_hotkey(app, hotkey_string),
+        KeyboardImplementation::HandyKeys => app
+            .try_state::<handy_keys::HandyKeysState>()
+            .ok_or_else(|| "HandyKeysState not initialized".to_string())?
+            .unregister_hotkey(binding_id, hotkey_string),
+    }
+}
+
+/// Append a new hotkey to a binding. Idempotent: a hotkey already in the
+/// binding's list is reported as success without re-registering.
 #[tauri::command]
 #[specta::specta]
-pub fn change_binding(
-    app: AppHandle,
-    id: String,
-    binding: String,
-) -> Result<BindingResponse, String> {
-    // Reject empty bindings — every shortcut should have a value
+pub fn add_binding(app: AppHandle, id: String, binding: String) -> Result<BindingResponse, String> {
     if binding.trim().is_empty() {
         return Err("Binding cannot be empty".to_string());
     }
 
     let mut settings = settings::get_settings(&app);
 
-    // Get the binding to modify, or create it from defaults if it doesn't exist
-    let binding_to_modify = match settings.bindings.get(&id) {
-        Some(binding) => binding.clone(),
-        None => {
-            // Try to get the default binding for this id
-            let default_settings = settings::get_default_settings();
-            match default_settings.bindings.get(&id) {
-                Some(default_binding) => {
-                    warn!(
-                        "Binding '{}' not found in settings, creating from defaults",
-                        id
-                    );
-                    default_binding.clone()
-                }
-                None => {
-                    let error_msg = format!("Binding with id '{}' not found in defaults", id);
-                    warn!("change_binding error: {}", error_msg);
-                    return Ok(BindingResponse {
-                        success: false,
-                        binding: None,
-                        error: Some(error_msg),
-                    });
-                }
+    let mut current = match settings.bindings.get(&id).cloned() {
+        Some(b) => b,
+        None => match settings::get_default_settings().bindings.get(&id).cloned() {
+            Some(b) => {
+                warn!(
+                    "Binding '{}' not found in settings, creating from defaults",
+                    id
+                );
+                b
             }
-        }
+            None => {
+                let error_msg = format!("Binding with id '{}' not found in defaults", id);
+                warn!("add_binding error: {}", error_msg);
+                return Ok(BindingResponse {
+                    success: false,
+                    binding: None,
+                    error: Some(error_msg),
+                });
+            }
+        },
     };
 
-    // If this is the cancel binding, just update the settings and return
-    // It's managed dynamically, so we don't register/unregister here
-    if id == "cancel" {
-        if let Some(mut b) = settings.bindings.get(&id).cloned() {
-            b.current_binding = binding;
-            settings.bindings.insert(id.clone(), b.clone());
-            settings::write_settings(&app, settings);
-            crate::secure_input::reconcile_fallback(&app);
+    if current.current_bindings.iter().any(|h| h == &binding) {
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(current),
+            error: None,
+        });
+    }
+
+    // Validate against the active implementation before mutating state.
+    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
+    {
+        warn!("add_binding validation error: {}", e);
+        return Err(e);
+    }
+
+    // Cancel binding is dynamically registered so we only persist; for any
+    // other binding we register the hotkey now.
+    if id != "cancel" {
+        if let Err(e) = register_hotkey_for_active_impl(&app, &id, &binding) {
+            let error_msg = format!("Failed to register shortcut: {}", e);
+            error!("add_binding error: {}", error_msg);
             return Ok(BindingResponse {
-                success: true,
-                binding: Some(b.clone()),
-                error: None,
+                success: false,
+                binding: None,
+                error: Some(error_msg),
             });
         }
     }
 
-    // Unregister the existing binding
-    if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
-        let error_msg = format!("Failed to unregister shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-    }
-
-    // Validate the new shortcut for the current keyboard implementation
-    if let Err(e) = validate_shortcut_for_implementation(&binding, settings.keyboard_implementation)
-    {
-        warn!("change_binding validation error: {}", e);
-        restore_registration(&app, &binding_to_modify);
-        return Err(e);
-    }
-
-    // Create an updated binding
-    let mut updated_binding = binding_to_modify.clone();
-    updated_binding.current_binding = binding;
-
-    // Register the new binding
-    if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
-        let error_msg = format!("Failed to register shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-        restore_registration(&app, &binding_to_modify);
-        return Ok(BindingResponse {
-            success: false,
-            binding: None,
-            error: Some(error_msg),
-        });
-    }
-
-    // Update the binding in the settings
-    settings.bindings.insert(id, updated_binding.clone());
-
-    // Save the settings and synchronize any active Secure Input shadows.
+    current.current_bindings.push(binding);
+    settings.bindings.insert(id.clone(), current.clone());
     settings::write_settings(&app, settings);
     crate::secure_input::reconcile_fallback(&app);
 
-    // Return the updated binding
     Ok(BindingResponse {
         success: true,
-        binding: Some(updated_binding),
+        binding: Some(current),
         error: None,
     })
 }
 
-/// Best-effort re-register of the previous binding after a failed change,
-/// so a failure leaves the user's shortcut working exactly as before.
-fn restore_registration(app: &AppHandle, binding: &ShortcutBinding) {
-    if let Err(e) = register_shortcut(app, binding.clone()) {
-        error!(
-            "Failed to restore previous binding '{}' ({}): {}",
-            binding.id, binding.current_binding, e
-        );
+/// Remove a single hotkey from a binding's list.
+#[tauri::command]
+#[specta::specta]
+pub fn remove_binding(
+    app: AppHandle,
+    id: String,
+    binding: String,
+) -> Result<BindingResponse, String> {
+    let mut settings = settings::get_settings(&app);
+    let Some(mut current) = settings.bindings.get(&id).cloned() else {
+        return Ok(BindingResponse {
+            success: false,
+            binding: None,
+            error: Some(format!("Binding '{}' not found", id)),
+        });
+    };
+
+    let original_len = current.current_bindings.len();
+    current.current_bindings.retain(|h| h != &binding);
+
+    if current.current_bindings.len() == original_len {
+        // Hotkey wasn't present — still return current state.
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(current),
+            error: None,
+        });
     }
+
+    if id != "cancel" {
+        if let Err(e) = unregister_hotkey_for_active_impl(&app, &id, &binding) {
+            warn!("remove_binding: unregister failed for '{}': {}", binding, e);
+        }
+    }
+
+    settings.bindings.insert(id, current.clone());
+    settings::write_settings(&app, settings);
+    crate::secure_input::reconcile_fallback(&app);
+
+    Ok(BindingResponse {
+        success: true,
+        binding: Some(current),
+        error: None,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn clear_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
+    let mut settings = settings::get_settings(&app);
+    if let Some(b) = settings.bindings.get(&id).cloned() {
+        let _ = unregister_shortcut(&app, b.clone());
+        let mut cleared = b;
+        cleared.current_bindings.clear();
+        settings.bindings.insert(id, cleared.clone());
+        settings::write_settings(&app, settings);
+        crate::secure_input::reconcile_fallback(&app);
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(cleared),
+            error: None,
+        });
+    }
+    Ok(BindingResponse {
+        success: false,
+        binding: None,
+        error: Some(format!("Binding '{}' not found", id)),
+    })
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, String> {
-    let binding = settings::get_stored_binding(&app, &id);
-    change_binding(app, id, binding.default_binding)
+    let stored = settings::get_stored_binding(&app, &id);
+
+    // Always unregister whatever was previously bound.
+    let _ = unregister_shortcut(&app, stored.clone());
+
+    let mut settings = settings::get_settings(&app);
+    let Some(mut current) = settings.bindings.get(&id).cloned() else {
+        return Ok(BindingResponse {
+            success: false,
+            binding: None,
+            error: Some(format!("Binding '{}' not found", id)),
+        });
+    };
+
+    // Reset to a single-element list of the default (or empty when no default).
+    current.current_bindings = if stored.default_binding.trim().is_empty() {
+        Vec::new()
+    } else {
+        vec![stored.default_binding.clone()]
+    };
+
+    if id != "cancel" {
+        for hk in &current.current_bindings {
+            if let Err(e) = register_hotkey_for_active_impl(&app, &id, hk) {
+                warn!("reset_binding: failed to register '{}': {}", hk, e);
+            }
+        }
+    }
+
+    settings.bindings.insert(id, current.clone());
+    settings::write_settings(&app, settings);
+    crate::secure_input::reconcile_fallback(&app);
+
+    Ok(BindingResponse {
+        success: true,
+        binding: Some(current),
+        error: None,
+    })
 }
 
 /// Unregister every binding while the user is recording a new shortcut in
@@ -392,6 +493,56 @@ fn validate_shortcut_for_implementation(
     }
 }
 
+/// Keep only the hotkeys in `hotkeys` that are valid for `implementation`,
+/// logging each removal. Pure filtering — never wipes the whole list just
+/// because one entry is invalid; the caller decides whether an empty result
+/// warrants falling back to the default.
+fn filter_valid_hotkeys(
+    id: &str,
+    hotkeys: Vec<String>,
+    implementation: KeyboardImplementation,
+) -> Vec<String> {
+    hotkeys
+        .into_iter()
+        .filter(
+            |hk| match validate_shortcut_for_implementation(hk, implementation) {
+                Ok(_) => true,
+                Err(e) => {
+                    info!(
+                        "Shortcut '{}' ({}) is invalid for {:?}: {}. Removing.",
+                        id, hk, implementation, e
+                    );
+                    false
+                }
+            },
+        )
+        .collect()
+}
+
+/// Aggregate the per-hotkey outcomes of registering (or unregistering) every
+/// hotkey in a binding into one `Result`. At least one success (or an empty
+/// list) is treated as overall success — a single failing hotkey must never
+/// hide the others that did register. Only when every hotkey failed is the
+/// last error propagated. Shared by the Tauri and HandyKeys implementations
+/// so the aggregation rule can't drift between them.
+pub(crate) fn aggregate_hotkey_results<E>(
+    results: impl IntoIterator<Item = Result<(), E>>,
+) -> Result<(), E> {
+    let mut any_succeeded = false;
+    let mut last_err = None;
+    for r in results {
+        match r {
+            Ok(()) => any_succeeded = true,
+            Err(e) => last_err = Some(e),
+        }
+    }
+    if any_succeeded {
+        Ok(())
+    } else {
+        last_err.map_or(Ok(()), Err)
+    }
+}
+
 /// Parse a keyboard implementation string into the enum
 fn parse_keyboard_implementation(s: &str) -> KeyboardImplementation {
     match s {
@@ -457,17 +608,28 @@ fn register_all_shortcuts_for_implementation(
             .cloned()
             .unwrap_or_else(|| default_binding.clone());
 
-        // Validate the shortcut for the target implementation
-        if let Err(e) =
-            validate_shortcut_for_implementation(&binding.current_binding, implementation)
-        {
-            info!(
-                "Shortcut '{}' ({}) is invalid for {:?}: {}. Resetting to default.",
-                id, binding.current_binding, implementation, e
-            );
+        if binding.current_bindings.is_empty() {
+            continue;
+        }
 
-            // Reset to default
-            binding.current_binding = default_binding.current_binding.clone();
+        let previous_len = binding.current_bindings.len();
+
+        // Remove only the hotkeys that are invalid for the target implementation,
+        // keeping valid ones. Fall back to the default only if the entire list is wiped.
+        binding.current_bindings =
+            filter_valid_hotkeys(id, binding.current_bindings, implementation);
+
+        let needs_reset = binding.current_bindings.is_empty()
+            && !default_binding.default_binding.trim().is_empty();
+
+        if needs_reset {
+            binding.current_bindings = vec![default_binding.default_binding.clone()];
+            current_settings
+                .bindings
+                .insert(id.clone(), binding.clone());
+            reset_bindings.push(id.clone());
+        } else if binding.current_bindings.len() < previous_len {
+            // Some hotkeys were removed but at least one remains — persist the trimmed list.
             current_settings
                 .bindings
                 .insert(id.clone(), binding.clone());
@@ -1290,6 +1452,15 @@ pub fn change_log_transcriptions_setting(app: AppHandle, enabled: bool) -> Resul
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_keyword_actions_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.keyword_actions_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_filler_word_removal_enabled_setting(
     app: AppHandle,
     enabled: bool,
@@ -1380,4 +1551,69 @@ pub async fn get_available_accelerators() -> crate::managers::transcription::Ava
     tauri::async_runtime::spawn_blocking(crate::managers::transcription::get_available_accelerators)
         .await
         .expect("get_available_accelerators panicked")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Bug fix #1: a single invalid hotkey must not nuke the whole binding ---
+
+    #[test]
+    fn filter_valid_hotkeys_drops_only_the_invalid_entry() {
+        // "fn" alone has no non-modifier key, which Tauri rejects, while
+        // "option+space" is valid. The old (buggy) behavior reset the whole
+        // binding to its default the moment *any* hotkey failed validation.
+        let hotkeys = vec!["option+space".to_string(), "fn".to_string()];
+        let kept = filter_valid_hotkeys("transcribe", hotkeys, KeyboardImplementation::Tauri);
+        assert_eq!(kept, vec!["option+space".to_string()]);
+    }
+
+    #[test]
+    fn filter_valid_hotkeys_keeps_everything_when_all_valid() {
+        let hotkeys = vec!["option+space".to_string(), "f13".to_string()];
+        let kept =
+            filter_valid_hotkeys("transcribe", hotkeys.clone(), KeyboardImplementation::Tauri);
+        assert_eq!(kept, hotkeys);
+    }
+
+    #[test]
+    fn filter_valid_hotkeys_drops_everything_when_all_invalid() {
+        let hotkeys = vec!["fn".to_string(), "ctrl".to_string()];
+        let kept = filter_valid_hotkeys("transcribe", hotkeys, KeyboardImplementation::Tauri);
+        assert!(kept.is_empty());
+    }
+
+    // --- Bug fix #2: a multi-hotkey register/unregister must not report Ok
+    // when every single hotkey actually failed ---
+
+    #[test]
+    fn aggregate_hotkey_results_ok_when_all_succeed() {
+        let results: Vec<Result<(), String>> = vec![Ok(()), Ok(())];
+        assert!(aggregate_hotkey_results(results).is_ok());
+    }
+
+    #[test]
+    fn aggregate_hotkey_results_ok_when_at_least_one_succeeds() {
+        let results: Vec<Result<(), String>> =
+            vec![Err("boom".to_string()), Ok(()), Err("boom2".to_string())];
+        assert!(aggregate_hotkey_results(results).is_ok());
+    }
+
+    #[test]
+    fn aggregate_hotkey_results_ok_when_empty() {
+        let results: Vec<Result<(), String>> = vec![];
+        assert!(aggregate_hotkey_results(results).is_ok());
+    }
+
+    #[test]
+    fn aggregate_hotkey_results_errs_only_when_everything_fails() {
+        // The bug: the old loop-with-last-err pattern in both implementations
+        // could fall through to `Ok(())` even when every hotkey failed,
+        // silently reporting success for a binding with zero working hotkeys.
+        let results: Vec<Result<(), String>> =
+            vec![Err("first".to_string()), Err("second".to_string())];
+        let err = aggregate_hotkey_results(results).unwrap_err();
+        assert_eq!(err, "second");
+    }
 }
