@@ -1,4 +1,24 @@
-# Handy
+# Handy - FORK
+
+## What's in this fork!?
+
+THANK YOU to cjpais for the most forkable dictation app!!! I made some additions I was missing from Wispr Flow, trying to break free from the cloud :)
+
+- Logging all transcription to disk. I wanted this for later analyzing the coherence and quality of transcripts (note: doesn't log audio files, just text)
+- App polls for input devices when you start a recording, allowing us to use the correct mic, then auto switch to clamshell mode if MacBook lid closed.
+- Implements some cheap DSP filters and plosive cleanup based on [pardeike/BroadcastVoiceDSP](https://github.com/pardeike/BroadcastVoiceDSP)
+- Enables the debug setting "clamshell microphone" for MacOS and notifies you if you dictate with the lid closed and mic unavailable.
+- Numbers are converted (e.g "one thousand" becomes "1000")
+- Spelling correction (key value pairs) for the STT; "sim link" would be corrected to "symlink" if that is what you are trying to say.
+- Separate Toggle + Push to Talk keybinds
+- "Keyword Actions"; currently you can say "Press enter" which will input a return signal, eg to send a chat message. Might extend this
+- RRNoise suppression based on some smart comments in the [Handy Discord server](https://discord.com/invite/WVBeWsNXK4)
+- Basic stutter-correction so repeated words don't get literally transcribed
+- Support for multiple key binds per shortcut (e.g. BOTH Right CTRL and FN key can be used to start dictation)
+
+---
+
+# Original readme:
 
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/WVBeWsNXK4)
 
