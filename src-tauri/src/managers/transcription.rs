@@ -1,6 +1,6 @@
 use crate::audio_toolkit::{
-    apply_custom_words, apply_quote_cues, detect_output_language, normalize_transcription_output,
-    remove_filler_words, OutputLanguageEvidence,
+    apply_correction_pairs, apply_custom_words, apply_quote_cues, detect_output_language,
+    normalize_transcription_output, remove_filler_words, OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -1774,6 +1774,12 @@ fn post_process_transcription_text(
             )
         } else {
             raw
+        };
+
+        let corrected = if !settings.correction_pairs.is_empty() {
+            apply_correction_pairs(&corrected, &settings.correction_pairs)
+        } else {
+            corrected
         };
 
         // Last-resort language evidence: confidence-gated detection from the

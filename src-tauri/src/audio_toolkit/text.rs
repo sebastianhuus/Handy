@@ -1,3 +1,4 @@
+use crate::settings::CorrectionPair;
 use natural::phonetics::soundex;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -217,6 +218,47 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
     }
 
     result.join(" ")
+}
+
+/// Applies exact correction pairs to transcribed text.
+///
+/// Each pair maps a commonly mis-transcribed string to its intended replacement.
+/// Matching is case-insensitive and respects word boundaries (alphanumeric edges),
+/// so "aws" won't corrupt "awesome". Pairs are applied in order.
+pub fn apply_correction_pairs(text: &str, pairs: &[CorrectionPair]) -> String {
+    if pairs.is_empty() {
+        return text.to_string();
+    }
+
+    let mut result = text.to_string();
+    for pair in pairs {
+        if pair.from.is_empty() {
+            continue;
+        }
+        let escaped = regex::escape(&pair.from);
+        // \b word boundaries work at string edges and around punctuation/spaces.
+        // Fall back to no-boundary match if the from string starts/ends with a
+        // non-word character (e.g. "#tag"), which makes \b invalid at that edge.
+        let pattern = if pair
+            .from
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric())
+            && pair
+                .from
+                .chars()
+                .last()
+                .is_some_and(|c| c.is_alphanumeric())
+        {
+            format!(r"(?i)\b{}\b", escaped)
+        } else {
+            format!(r"(?i){}", escaped)
+        };
+        if let Ok(re) = Regex::new(&pattern) {
+            result = re.replace_all(&result, pair.to.as_str()).into_owned();
+        }
+    }
+    result
 }
 
 /// Preserves the case pattern of the original word when applying a replacement
@@ -464,6 +506,85 @@ mod tests {
         let custom_words = vec!["hello".to_string(), "world".to_string()];
         let result = apply_custom_words(text, &custom_words, 0.5);
         assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_apply_correction_pairs_empty() {
+        let text = "hello world";
+        let result = apply_correction_pairs(text, &[]);
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_apply_correction_pairs_basic_replacement() {
+        let text = "I use aws for cloud hosting";
+        let pairs = vec![CorrectionPair {
+            from: "aws".to_string(),
+            to: "AWS".to_string(),
+        }];
+        let result = apply_correction_pairs(text, &pairs);
+        assert_eq!(result, "I use AWS for cloud hosting");
+    }
+
+    #[test]
+    fn test_apply_correction_pairs_case_insensitive_match() {
+        let text = "AWS and Aws and aws";
+        let pairs = vec![CorrectionPair {
+            from: "aws".to_string(),
+            to: "AWS".to_string(),
+        }];
+        let result = apply_correction_pairs(text, &pairs);
+        assert_eq!(result, "AWS and AWS and AWS");
+    }
+
+    #[test]
+    fn test_apply_correction_pairs_respects_word_boundaries() {
+        let text = "that was awesome, not aws";
+        let pairs = vec![CorrectionPair {
+            from: "aws".to_string(),
+            to: "AWS".to_string(),
+        }];
+        let result = apply_correction_pairs(text, &pairs);
+        assert_eq!(result, "that was awesome, not AWS");
+    }
+
+    #[test]
+    fn test_apply_correction_pairs_multiple_pairs_applied_in_order() {
+        let text = "chat gpt and claude ai";
+        let pairs = vec![
+            CorrectionPair {
+                from: "chat gpt".to_string(),
+                to: "ChatGPT".to_string(),
+            },
+            CorrectionPair {
+                from: "claude ai".to_string(),
+                to: "Claude AI".to_string(),
+            },
+        ];
+        let result = apply_correction_pairs(text, &pairs);
+        assert_eq!(result, "ChatGPT and Claude AI");
+    }
+
+    #[test]
+    fn test_apply_correction_pairs_skips_empty_from() {
+        let text = "hello world";
+        let pairs = vec![CorrectionPair {
+            from: "".to_string(),
+            to: "x".to_string(),
+        }];
+        let result = apply_correction_pairs(text, &pairs);
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_apply_correction_pairs_non_alphanumeric_edges_no_word_boundary() {
+        let text = "check out #tag today";
+        let pairs = vec![CorrectionPair {
+            from: "#tag".to_string(),
+            to: "#hashtag".to_string(),
+        }];
+        let result = apply_correction_pairs(text, &pairs);
+        assert_eq!(result, "check out #hashtag today");
     }
 
     #[test]
