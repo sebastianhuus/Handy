@@ -204,8 +204,12 @@
         "errors": {
           "restore": "Không thể khôi phục phím tắt gốc",
           "set": "Không thể đặt phím tắt: {{error}}",
-          "reset": "Không thể đặt lại phím tắt về giá trị gốc"
-        }
+          "reset": "Không thể đặt lại phím tắt về giá trị gốc",
+          "duplicate": "{{shortcut}} is already assigned to {{name}}"
+        },
+        "notSet": "No hotkey",
+        "add": "+ Add",
+        "remove": "Remove"
       },
       "language": {
         "title": "Ngôn ngữ",
@@ -246,6 +250,14 @@
       "volume": {
         "title": "Âm lượng",
         "description": "Điều chỉnh âm lượng của âm thanh phản hồi"
+      },
+      "noiseSuppression": {
+        "label": "Noise Suppression",
+        "description": "Apply RNNoise to reduce background noise before transcription"
+      },
+      "convertNumberWords": {
+        "label": "Convert Number Words to Digits",
+        "description": "Automatically convert spoken numbers to digits (e.g. \"twenty three\" → \"23\", \"one hundred and fifty\" → \"150\")"
       }
     },
     "advanced": {
@@ -380,6 +392,19 @@
       "fillerWordRemoval": {
         "title": "Loại bỏ từ đệm",
         "description": "Loại bỏ các từ ngập ngừng phổ biến khỏi bản chép lời. Tắt để giữ lại các từ này."
+      },
+      "keywordActions": {
+        "label": "Voice Keyword Actions",
+        "description": "Say \"press enter\" at the end of a dictation to press Enter after pasting"
+      },
+      "correctionPairs": {
+        "title": "Correction Pairs",
+        "description": "Define exact replacements for strings that are commonly transcribed incorrectly. Each pair replaces the transcribed text with your correction.",
+        "placeholderFrom": "Transcribed as",
+        "placeholderTo": "Replace with",
+        "add": "Add",
+        "remove": "Remove {{from}} → {{to}}",
+        "duplicate": "\"{{word}}\" is already being corrected"
       }
     },
     "postProcessing": {
@@ -571,6 +596,11 @@
         "button": "Xem trước",
         "noNotes": "Không tìm thấy ghi chú phát hành được đóng gói",
         "error": "Không thể xem trước ghi chú phát hành"
+      },
+      "transcriptionLog": {
+        "label": "Log Transcriptions to File",
+        "description": "Append each transcription to a JSONL file on disk. Useful for analyzing transcription quality over time. The file is never auto-deleted.",
+        "filePath": "Log file"
       }
     },
     "about": {

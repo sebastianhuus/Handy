@@ -184,8 +184,12 @@
         "errors": {
           "restore": "पहले वाला शॉर्टकट वापस नहीं लाया जा सका",
           "set": "शॉर्टकट सेट नहीं हो सका: {{error}}",
-          "reset": "शॉर्टकट को पहले जैसा रीसेट नहीं किया जा सका"
-        }
+          "reset": "शॉर्टकट को पहले जैसा रीसेट नहीं किया जा सका",
+          "duplicate": "{{shortcut}} is already assigned to {{name}}"
+        },
+        "notSet": "No hotkey",
+        "add": "+ Add",
+        "remove": "Remove"
       },
       "language": {
         "title": "भाषा",
@@ -246,6 +250,14 @@
       "volume": {
         "title": "वॉल्यूम",
         "description": "ऑडियो फ़ीडबैक साउंड का वॉल्यूम सेट करें"
+      },
+      "noiseSuppression": {
+        "label": "Noise Suppression",
+        "description": "Apply RNNoise to reduce background noise before transcription"
+      },
+      "convertNumberWords": {
+        "label": "Convert Number Words to Digits",
+        "description": "Automatically convert spoken numbers to digits (e.g. \"twenty three\" → \"23\", \"one hundred and fifty\" → \"150\")"
       }
     },
     "advanced": {
@@ -380,6 +392,19 @@
       "fillerWordRemoval": {
         "title": "फिलर शब्द हटाएं",
         "description": "ट्रांसक्रिप्शन से आम हिचकिचाहट वाले शब्द हटाता है। उन्हें बनाए रखने के लिए इसे बंद करें।"
+      },
+      "keywordActions": {
+        "label": "Voice Keyword Actions",
+        "description": "Say \"press enter\" at the end of a dictation to press Enter after pasting"
+      },
+      "correctionPairs": {
+        "title": "Correction Pairs",
+        "description": "Define exact replacements for strings that are commonly transcribed incorrectly. Each pair replaces the transcribed text with your correction.",
+        "placeholderFrom": "Transcribed as",
+        "placeholderTo": "Replace with",
+        "add": "Add",
+        "remove": "Remove {{from}} → {{to}}",
+        "duplicate": "\"{{word}}\" is already being corrected"
       }
     },
     "postProcessing": {
@@ -571,6 +596,11 @@
         "verdictOk": "कुंजी इवेंट Handy तक सामान्य रूप से पहुँच रहे हैं.",
         "verdictNoEvents": "कोई इवेंट कैप्चर नहीं हुआ — क्या आपने टेस्ट के दौरान कोई कुंजी दबाई थी?",
         "failed": "डायग्नोस्टिक विफल: {{error}}"
+      },
+      "transcriptionLog": {
+        "label": "Log Transcriptions to File",
+        "description": "Append each transcription to a JSONL file on disk. Useful for analyzing transcription quality over time. The file is never auto-deleted.",
+        "filePath": "Log file"
       }
     },
     "about": {

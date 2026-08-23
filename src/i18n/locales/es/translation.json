@@ -204,8 +204,12 @@
         "errors": {
           "restore": "Error al restaurar el atajo original",
           "set": "Error al configurar el atajo: {{error}}",
-          "reset": "Error al restablecer el atajo al valor original"
-        }
+          "reset": "Error al restablecer el atajo al valor original",
+          "duplicate": "{{shortcut}} is already assigned to {{name}}"
+        },
+        "notSet": "No hotkey",
+        "add": "+ Add",
+        "remove": "Remove"
       },
       "language": {
         "title": "Idioma",
@@ -246,6 +250,14 @@
       "volume": {
         "title": "Volumen",
         "description": "Ajusta el volumen de los sonidos de retroalimentación de audio"
+      },
+      "noiseSuppression": {
+        "label": "Noise Suppression",
+        "description": "Apply RNNoise to reduce background noise before transcription"
+      },
+      "convertNumberWords": {
+        "label": "Convert Number Words to Digits",
+        "description": "Automatically convert spoken numbers to digits (e.g. \"twenty three\" → \"23\", \"one hundred and fifty\" → \"150\")"
       }
     },
     "advanced": {
@@ -380,6 +392,19 @@
       "fillerWordRemoval": {
         "title": "Eliminar muletillas",
         "description": "Elimina las muletillas más comunes de las transcripciones. Desactívalo para conservarlas."
+      },
+      "keywordActions": {
+        "label": "Voice Keyword Actions",
+        "description": "Say \"press enter\" at the end of a dictation to press Enter after pasting"
+      },
+      "correctionPairs": {
+        "title": "Correction Pairs",
+        "description": "Define exact replacements for strings that are commonly transcribed incorrectly. Each pair replaces the transcribed text with your correction.",
+        "placeholderFrom": "Transcribed as",
+        "placeholderTo": "Replace with",
+        "add": "Add",
+        "remove": "Remove {{from}} → {{to}}",
+        "duplicate": "\"{{word}}\" is already being corrected"
       }
     },
     "postProcessing": {
@@ -571,6 +596,11 @@
         "button": "Vista previa",
         "noNotes": "No se encontraron notas de la versión incluidas",
         "error": "No se pudo mostrar la vista previa de las notas de la versión"
+      },
+      "transcriptionLog": {
+        "label": "Log Transcriptions to File",
+        "description": "Append each transcription to a JSONL file on disk. Useful for analyzing transcription quality over time. The file is never auto-deleted.",
+        "filePath": "Log file"
       }
     },
     "about": {

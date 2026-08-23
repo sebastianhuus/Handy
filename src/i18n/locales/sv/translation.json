@@ -184,8 +184,12 @@
         "errors": {
           "restore": "Misslyckades med att återställa ursprungligt kortkommando",
           "set": "Misslyckades med att ställa in kortkommando: {{error}}",
-          "reset": "Misslyckades med att återställa kortkommando till ursprungsvärdet"
-        }
+          "reset": "Misslyckades med att återställa kortkommando till ursprungsvärdet",
+          "duplicate": "{{shortcut}} is already assigned to {{name}}"
+        },
+        "notSet": "No hotkey",
+        "add": "+ Add",
+        "remove": "Remove"
       },
       "language": {
         "title": "Språk",
@@ -246,6 +250,14 @@
       "volume": {
         "title": "Volym",
         "description": "Justera volymen för ljudåterkopplingsljud"
+      },
+      "noiseSuppression": {
+        "label": "Noise Suppression",
+        "description": "Apply RNNoise to reduce background noise before transcription"
+      },
+      "convertNumberWords": {
+        "label": "Convert Number Words to Digits",
+        "description": "Automatically convert spoken numbers to digits (e.g. \"twenty three\" → \"23\", \"one hundred and fifty\" → \"150\")"
       }
     },
     "advanced": {
@@ -380,6 +392,19 @@
       "fillerWordRemoval": {
         "title": "Ta bort utfyllnadsord",
         "description": "Tar bort vanliga tvekljud från transkriberingar. Stäng av för att behålla dem."
+      },
+      "keywordActions": {
+        "label": "Voice Keyword Actions",
+        "description": "Say \"press enter\" at the end of a dictation to press Enter after pasting"
+      },
+      "correctionPairs": {
+        "title": "Correction Pairs",
+        "description": "Define exact replacements for strings that are commonly transcribed incorrectly. Each pair replaces the transcribed text with your correction.",
+        "placeholderFrom": "Transcribed as",
+        "placeholderTo": "Replace with",
+        "add": "Add",
+        "remove": "Remove {{from}} → {{to}}",
+        "duplicate": "\"{{word}}\" is already being corrected"
       }
     },
     "postProcessing": {
@@ -571,6 +596,11 @@
         "button": "Förhandsvisa",
         "noNotes": "Ingen medföljande versionsinformation hittades",
         "error": "Det gick inte att förhandsvisa versionsinformationen"
+      },
+      "transcriptionLog": {
+        "label": "Log Transcriptions to File",
+        "description": "Append each transcription to a JSONL file on disk. Useful for analyzing transcription quality over time. The file is never auto-deleted.",
+        "filePath": "Log file"
       }
     },
     "about": {

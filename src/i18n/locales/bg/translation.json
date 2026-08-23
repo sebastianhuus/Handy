@@ -184,8 +184,12 @@
         "errors": {
           "restore": "Неуспешно възстановяване на оригиналния бърз клавиш",
           "set": "Неуспешно задаване на бързия клавиш: {{error}}",
-          "reset": "Неуспешно нулиране на бързия клавиш към първоначалната стойност"
-        }
+          "reset": "Неуспешно нулиране на бързия клавиш към първоначалната стойност",
+          "duplicate": "{{shortcut}} is already assigned to {{name}}"
+        },
+        "notSet": "No hotkey",
+        "add": "+ Add",
+        "remove": "Remove"
       },
       "language": {
         "title": "Език",
@@ -246,6 +250,14 @@
       "volume": {
         "title": "Сила на звука",
         "description": "Регулирайте силата на звуците за обратна връзка"
+      },
+      "noiseSuppression": {
+        "label": "Noise Suppression",
+        "description": "Apply RNNoise to reduce background noise before transcription"
+      },
+      "convertNumberWords": {
+        "label": "Convert Number Words to Digits",
+        "description": "Automatically convert spoken numbers to digits (e.g. \"twenty three\" → \"23\", \"one hundred and fifty\" → \"150\")"
       }
     },
     "advanced": {
@@ -380,6 +392,19 @@
       "fillerWordRemoval": {
         "title": "Премахване на думи паразити",
         "description": "Премахва често срещаните думи за колебание от транскрипциите. Изключете, за да ги запазите."
+      },
+      "keywordActions": {
+        "label": "Voice Keyword Actions",
+        "description": "Say \"press enter\" at the end of a dictation to press Enter after pasting"
+      },
+      "correctionPairs": {
+        "title": "Correction Pairs",
+        "description": "Define exact replacements for strings that are commonly transcribed incorrectly. Each pair replaces the transcribed text with your correction.",
+        "placeholderFrom": "Transcribed as",
+        "placeholderTo": "Replace with",
+        "add": "Add",
+        "remove": "Remove {{from}} → {{to}}",
+        "duplicate": "\"{{word}}\" is already being corrected"
       }
     },
     "postProcessing": {
@@ -571,6 +596,11 @@
         "button": "Преглед",
         "noNotes": "Не са намерени включени бележки към изданието",
         "error": "Неуспешен преглед на бележките към изданието"
+      },
+      "transcriptionLog": {
+        "label": "Log Transcriptions to File",
+        "description": "Append each transcription to a JSONL file on disk. Useful for analyzing transcription quality over time. The file is never auto-deleted.",
+        "filePath": "Log file"
       }
     },
     "about": {

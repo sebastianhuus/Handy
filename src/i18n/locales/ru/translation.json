@@ -204,8 +204,12 @@
         "errors": {
           "restore": "Не удалось восстановить исходный ярлык",
           "set": "Не удалось установить ярлык: {{error}}",
-          "reset": "Не удалось сбросить ярлык до исходного значения"
-        }
+          "reset": "Не удалось сбросить ярлык до исходного значения",
+          "duplicate": "{{shortcut}} is already assigned to {{name}}"
+        },
+        "notSet": "No hotkey",
+        "add": "+ Add",
+        "remove": "Remove"
       },
       "language": {
         "title": "Язык",
@@ -246,6 +250,14 @@
       "volume": {
         "title": "Громкость",
         "description": "Отрегулируйте громкость звуков обратной связи"
+      },
+      "noiseSuppression": {
+        "label": "Noise Suppression",
+        "description": "Apply RNNoise to reduce background noise before transcription"
+      },
+      "convertNumberWords": {
+        "label": "Convert Number Words to Digits",
+        "description": "Automatically convert spoken numbers to digits (e.g. \"twenty three\" → \"23\", \"one hundred and fifty\" → \"150\")"
       }
     },
     "advanced": {
@@ -380,6 +392,19 @@
       "fillerWordRemoval": {
         "title": "Удалять слова-паразиты",
         "description": "Удаляет распространённые слова-заминки из расшифровок. Отключите, чтобы сохранить их."
+      },
+      "keywordActions": {
+        "label": "Voice Keyword Actions",
+        "description": "Say \"press enter\" at the end of a dictation to press Enter after pasting"
+      },
+      "correctionPairs": {
+        "title": "Correction Pairs",
+        "description": "Define exact replacements for strings that are commonly transcribed incorrectly. Each pair replaces the transcribed text with your correction.",
+        "placeholderFrom": "Transcribed as",
+        "placeholderTo": "Replace with",
+        "add": "Add",
+        "remove": "Remove {{from}} → {{to}}",
+        "duplicate": "\"{{word}}\" is already being corrected"
       }
     },
     "postProcessing": {
@@ -571,6 +596,11 @@
         "button": "Предпросмотр",
         "noNotes": "Встроенные примечания к выпуску не найдены",
         "error": "Не удалось показать предварительный просмотр примечаний к выпуску"
+      },
+      "transcriptionLog": {
+        "label": "Log Transcriptions to File",
+        "description": "Append each transcription to a JSONL file on disk. Useful for analyzing transcription quality over time. The file is never auto-deleted.",
+        "filePath": "Log file"
       }
     },
     "about": {
