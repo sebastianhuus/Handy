@@ -1,0 +1,81 @@
+name: "upstream sync check"
+on:
+  schedule:
+    - cron: "0 9 * * 1" # every Monday at 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout personal-features
+        uses: actions/checkout@v5
+        with:
+          ref: personal-features
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/cjpais/Handy.git
+          git fetch upstream main
+
+      - name: Diff against upstream/main
+        id: diff
+        run: |
+          count=$(git rev-list --count origin/personal-features..upstream/main)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "commits<<COMMITS_EOF"
+            git log --pretty=format:'- [`%h`](https://github.com/cjpais/Handy/commit/%H) %s (%an)' origin/personal-features..upstream/main
+            echo ""
+            echo "COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tracking label exists
+        if: steps.diff.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create upstream-sync \
+            --color FBCA04 \
+            --description "Tracks commits pending merge from upstream cjpais/Handy" \
+            2>/dev/null || true
+
+      - name: Open or update tracking issue
+        if: steps.diff.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COUNT: ${{ steps.diff.outputs.count }}
+          COMMITS: ${{ steps.diff.outputs.commits }}
+        run: |
+          title="Upstream sync: ${COUNT} commit(s) pending from cjpais/Handy"
+          body="\`personal-features\` is ${COUNT} commit(s) behind [\`upstream/main\`](https://github.com/cjpais/Handy/commits/main).
+
+          ${COMMITS}
+
+          Before merging each one, gauge conflict risk with \`git merge-tree <merge-base> personal-features <commit>\` per cumulative prefix — file overlap alone overstates risk, since many overlapping-file commits merge with zero markers. A commit that rewrites a file this fork hand-modifies (e.g. an architectural rewrite) needs the fork-specific logic re-derived against the new shape, not textually merged — do that on a throwaway branch, verify with the full check battery (cargo test / clippy / fmt, bun build / prettier), then fast-forward \`personal-features\`.
+
+          This issue is auto-updated weekly by \`.github/workflows/upstream-sync-check.yml\` and auto-closes once \`personal-features\` catches up."
+
+          existing=$(gh issue list --label upstream-sync --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label upstream-sync
+          fi
+
+      - name: Close tracking issue if caught up
+        if: steps.diff.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh issue list --label upstream-sync --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "personal-features has caught up with upstream/main. Closing."
+            gh issue close "$existing"
+          fi
