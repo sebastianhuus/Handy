@@ -7,7 +7,9 @@ use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, AppSettings, OverlayStyle, PasteMethod, APPLE_INTELLIGENCE_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils::{
@@ -79,6 +81,16 @@ fn strip_keyword_action(text: &str) -> (String, bool) {
     } else {
         (text.to_string(), false)
     }
+}
+
+/// Whether a "press enter" keyword action should actually send the key.
+/// `PasteMethod::None` skips the paste entirely, so there's nothing for an
+/// Enter press to follow; `auto_submit` already sends its own Return once
+/// `paste()` completes on a non-skipped method, so firing a second one here
+/// would double-submit. Mirrors `clipboard::should_send_auto_submit`'s own
+/// `PasteMethod::None` guard rather than pressing Enter unconditionally.
+fn should_send_keyword_enter(paste_method: PasteMethod, auto_submit: bool) -> bool {
+    paste_method != PasteMethod::None && !auto_submit
 }
 
 /// Strip invisible Unicode characters that some LLMs may insert
@@ -780,7 +792,7 @@ impl ShortcutAction for TranscribeAction {
                     }
 
                     match transcription_result {
-                        Ok(transcription) => {
+                        Ok(mut transcription) => {
                             debug!(
                                 "Transcription completed in {:?}: '{}'",
                                 transcription_time.elapsed(),
@@ -815,18 +827,28 @@ impl ShortcutAction for TranscribeAction {
 
                             // Strip keyword action phrases before history save and paste
                             let kw_settings = get_settings(&ah);
-                            let press_enter = if kw_settings.keyword_actions_enabled {
+                            let mut press_enter = false;
+                            if kw_settings.keyword_actions_enabled {
                                 let (clean, flag) = strip_keyword_action(&processed.final_text);
                                 if flag {
                                     processed.post_processed_text = processed
                                         .post_processed_text
                                         .map(|pp| strip_keyword_action(&pp).0);
                                     processed.final_text = clean;
+                                    // The raw history entry used to keep the keyword
+                                    // phrase even though the post-processed/pasted
+                                    // text had it stripped — the history UI only
+                                    // ever displays/copies this raw field, so
+                                    // "press enter" would otherwise linger in the
+                                    // one place a user actually sees it.
+                                    transcription = strip_keyword_action(&transcription).0;
+                                    press_enter = true;
                                 }
-                                flag
-                            } else {
-                                false
-                            };
+                            }
+                            press_enter &= should_send_keyword_enter(
+                                kw_settings.paste_method,
+                                kw_settings.auto_submit,
+                            );
 
                             // Save to history if WAV was saved
                             if wav_saved {
@@ -842,8 +864,35 @@ impl ShortcutAction for TranscribeAction {
                             }
 
                             if processed.final_text.is_empty() {
-                                utils::hide_recording_overlay(&ah);
-                                set_tray_state(&ah, TrayIconState::Idle);
+                                // Nothing to paste, but a bare "press enter"
+                                // utterance still strips to an empty string here —
+                                // don't drop the keyword action just because there's
+                                // no text alongside it.
+                                if press_enter {
+                                    let ah_clone = ah.clone();
+                                    let rm_for_press = Arc::clone(&rm);
+                                    ah.run_on_main_thread(move || {
+                                        if rm_for_press.was_cancelled_since(cancel_generation) {
+                                            debug!(
+                                                "Transcription operation cancelled before keyword Enter"
+                                            );
+                                        } else if let Err(e) =
+                                            crate::clipboard::press_enter_key(&ah_clone)
+                                        {
+                                            error!("Failed to press Enter after paste: {}", e);
+                                        }
+                                        utils::hide_recording_overlay(&ah_clone);
+                                        set_tray_state(&ah_clone, TrayIconState::Idle);
+                                    })
+                                    .unwrap_or_else(|e| {
+                                        error!("Failed to run press_enter on main thread: {:?}", e);
+                                        utils::hide_recording_overlay(&ah);
+                                        set_tray_state(&ah, TrayIconState::Idle);
+                                    });
+                                } else {
+                                    utils::hide_recording_overlay(&ah);
+                                    set_tray_state(&ah, TrayIconState::Idle);
+                                }
                             } else {
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
@@ -1005,10 +1054,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
-        strip_keyword_action, strip_think_block, ACTION_MAP,
+        complete_unless_cancelled, is_blank_transcription, should_send_keyword_enter,
+        should_use_streaming_overlay, strip_keyword_action, strip_think_block, ACTION_MAP,
     };
-    use crate::settings::OverlayStyle;
+    use crate::settings::{OverlayStyle, PasteMethod};
     use std::future;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -1048,6 +1097,25 @@ mod tests {
         let (clean, flag) = strip_keyword_action("just a normal dictation");
         assert!(!flag);
         assert_eq!(clean, "just a normal dictation");
+    }
+
+    #[test]
+    fn keyword_enter_sends_by_default() {
+        assert!(should_send_keyword_enter(PasteMethod::Direct, false));
+    }
+
+    #[test]
+    fn keyword_enter_skipped_when_paste_is_skipped() {
+        // Nothing was pasted, so there's nothing for Enter to follow.
+        assert!(!should_send_keyword_enter(PasteMethod::None, false));
+        // Even with auto_submit also on — both guards independently veto it.
+        assert!(!should_send_keyword_enter(PasteMethod::None, true));
+    }
+
+    #[test]
+    fn keyword_enter_skipped_when_auto_submit_already_sends_one() {
+        assert!(!should_send_keyword_enter(PasteMethod::Direct, true));
+        assert!(!should_send_keyword_enter(PasteMethod::CtrlV, true));
     }
 
     #[test]
