@@ -417,7 +417,17 @@ impl CoordinatorState {
                 }
             }
         } else if input.is_pressed {
-            match classify_press(false, &input.binding_id, active, false) {
+            // Pass `true` here (not `input.push_to_talk`, which is false for a
+            // toggle-mode binding): the upgrade decision is about whether the
+            // *active* recording is a PTT session from a different binding —
+            // classify_press already establishes that via `active`'s `false`
+            // (PTT) tag — not about whether this incoming press's own binding
+            // happens to be PTT-configured. Since PTT-ness became per-binding
+            // rather than a single global flag, a toggle-configured binding's
+            // press must be able to latch an in-progress PTT recording into
+            // toggle mode too (e.g. hold the PTT hotkey, tap a toggle hotkey to
+            // free your hands, tap it again later to stop).
+            match classify_press(true, &input.binding_id, active, false) {
                 PressOutcome::Start => {
                     return Some(self.begin_recording(
                         input.binding_id,
@@ -425,6 +435,24 @@ impl CoordinatorState {
                         false,
                         now,
                     ));
+                }
+                PressOutcome::UpgradeToToggle => {
+                    if let Stage::Recording {
+                        binding_id: active_id,
+                        started_at,
+                    } = &self.stage
+                    {
+                        let active_id = active_id.clone();
+                        let started_at = *started_at;
+                        debug!(
+                            "PTT '{active_id}' upgraded to toggle mode by '{}'",
+                            input.binding_id
+                        );
+                        self.stage = Stage::RecordingToggle {
+                            binding_id: active_id,
+                            started_at,
+                        };
+                    }
                 }
                 PressOutcome::CrossBindingStop => {
                     if let Stage::RecordingToggle {
@@ -441,7 +469,7 @@ impl CoordinatorState {
                         ));
                     }
                 }
-                PressOutcome::UpgradeToToggle | PressOutcome::Ignore => {
+                PressOutcome::Ignore => {
                     debug!(
                         "Ignoring press for '{}': another binding is recording",
                         input.binding_id
@@ -575,7 +603,9 @@ pub struct TranscriptionCoordinator {
 }
 
 pub fn is_transcribe_binding(id: &str) -> bool {
-    id == "transcribe" || id == "transcribe_with_post_process"
+    id == "transcribe"
+        || id == "transcribe_with_post_process"
+        || id == "transcribe_with_push_to_talk"
 }
 
 impl TranscriptionCoordinator {
@@ -739,6 +769,39 @@ fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_transcribe_binding_recognises_plain_transcribe() {
+        assert!(is_transcribe_binding("transcribe"));
+    }
+
+    #[test]
+    fn is_transcribe_binding_recognises_post_process() {
+        assert!(is_transcribe_binding("transcribe_with_post_process"));
+    }
+
+    #[test]
+    fn is_transcribe_binding_recognises_push_to_talk() {
+        assert!(
+            is_transcribe_binding("transcribe_with_push_to_talk"),
+            "transcribe_with_push_to_talk must be recognised as a transcribe binding"
+        );
+    }
+
+    #[test]
+    fn is_transcribe_binding_rejects_cancel() {
+        assert!(!is_transcribe_binding("cancel"));
+    }
+
+    #[test]
+    fn is_transcribe_binding_rejects_unknown() {
+        assert!(!is_transcribe_binding("unknown_action"));
+    }
+
+    #[test]
+    fn is_transcribe_binding_rejects_empty_string() {
+        assert!(!is_transcribe_binding(""));
+    }
 
     #[test]
     fn push_to_talk_release_while_recording_defers_release() {
@@ -932,14 +995,29 @@ mod tests {
     }
 
     #[test]
-    fn classify_press_does_not_upgrade_outside_push_to_talk() {
-        // In toggle mode a recording is always native RecordingToggle
-        // (is_toggle = true), never PTT `Recording`, so this combination
-        // shouldn't arise in practice — but if it did, non-PTT sessions
-        // must never upgrade (there's nothing to upgrade *from*).
+    fn classify_press_raw_push_to_talk_false_never_upgrades() {
+        // Property of the pure function itself: with push_to_talk=false it
+        // never returns UpgradeToToggle, only Ignore/Start/CrossBindingStop.
+        // The coordinator's on_input never actually calls it this way for a
+        // press — see the next test and `on_input`'s toggle-press branch,
+        // which deliberately passes `true` so that a toggle-configured
+        // binding's press can still latch an active PTT session into toggle
+        // mode (PTT-ness became per-binding rather than one global flag, so
+        // a PTT recording and a toggle-configured binding can coexist).
         assert_eq!(
             classify_press(false, TRANSCRIBE_PP, Some((TRANSCRIBE, false)), false),
             PressOutcome::Ignore
+        );
+    }
+
+    #[test]
+    fn classify_press_toggle_binding_press_upgrades_active_ptt_session() {
+        // The "latch" workflow: hold a PTT-configured binding, tap a
+        // different toggle-configured binding — the PTT recording upgrades
+        // to toggle mode so releasing the PTT key no longer stops it.
+        assert_eq!(
+            classify_press(true, TRANSCRIBE_PP, Some((TRANSCRIBE, false)), false),
+            PressOutcome::UpgradeToToggle
         );
     }
 
@@ -1403,6 +1481,63 @@ mod tests {
             state.stage,
             Stage::RecordingToggle { ref binding_id, .. } if binding_id == BINDING
         ));
+    }
+
+    /// End-to-end "latch" workflow: hold the dedicated push-to-talk binding,
+    /// tap a *toggle-configured* binding (push_to_talk=false — this is the
+    /// realistic case now that PTT-ness is per-binding, not a shared global
+    /// flag) while still holding it, then let go of the PTT key. The session
+    /// must have upgraded to toggle mode so that release does not stop it;
+    /// only a later press of a transcribe binding stops and transcribes it.
+    #[test]
+    fn toggle_binding_press_latches_an_active_ptt_session() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+
+        // Hold the PTT binding: starts a PTT recording.
+        let effect = state.on_input(ptt_input(true), now);
+        assert!(matches!(effect, Some(Effect::Start { .. })));
+        assert!(matches!(state.stage, Stage::Recording { .. }));
+
+        // Tap the toggle-configured binding while still holding the PTT key.
+        let toggle_tap = InputEvent {
+            binding_id: OTHER_BINDING.to_string(),
+            hotkey_string: OTHER_BINDING.to_string(),
+            is_pressed: true,
+            push_to_talk: false,
+            external: false,
+        };
+        let effect = state.on_input(toggle_tap, now + Duration::from_millis(50));
+        assert!(
+            effect.is_none(),
+            "latching upgrades the stage but doesn't itself start/stop anything"
+        );
+        assert!(
+            matches!(state.stage, Stage::RecordingToggle { ref binding_id, .. } if binding_id == BINDING),
+            "PTT session must upgrade to toggle mode, still owned by the original PTT binding"
+        );
+
+        // Release the PTT key: must NOT stop the (now toggle-mode) recording.
+        let effect = state.on_input(ptt_input(false), now + Duration::from_millis(100));
+        assert!(
+            effect.is_none(),
+            "releasing the PTT key after latching must not stop the recording"
+        );
+        assert!(matches!(state.stage, Stage::RecordingToggle { .. }));
+
+        // A later press of the toggle binding stops and transcribes it.
+        let toggle_stop = InputEvent {
+            binding_id: OTHER_BINDING.to_string(),
+            hotkey_string: OTHER_BINDING.to_string(),
+            is_pressed: true,
+            push_to_talk: false,
+            external: false,
+        };
+        let effect = state.on_input(toggle_stop, now + Duration::from_millis(300));
+        assert!(
+            matches!(effect, Some(Effect::Stop { .. })),
+            "a later transcribe-binding press must stop the latched session"
+        );
     }
 
     /// If the start effect fails to begin recording (e.g. microphone access

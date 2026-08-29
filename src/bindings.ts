@@ -5,6 +5,10 @@
 
 
 export const commands = {
+/**
+ * Append a new hotkey to a binding. Idempotent: a hotkey already in the
+ * binding's list is reported as success without re-registering.
+ */
 async addBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("add_binding", { id, binding }) };
@@ -13,6 +17,9 @@ async addBinding(id: string, binding: string) : Promise<Result<BindingResponse, 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Remove a single hotkey from a binding's list.
+ */
 async removeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("remove_binding", { id, binding }) };
@@ -32,14 +39,6 @@ async clearBinding(id: string) : Promise<Result<BindingResponse, string>> {
 async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("reset_binding", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async changePttSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_ptt_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -666,7 +665,7 @@ async initializeShortcuts() : Promise<Result<null, string>> {
  * Returns the integer value (0=Do Nothing, 1=Change Input Source,
  * 2=Show Emoji & Symbols, 3=Start Dictation) or -1 if the key is
  * unset / can't be read / on a non-macOS platform.
- *
+ * 
  * Used by the frontend to warn users when they bind the Fn key as a
  * hotkey while macOS is configured to do something with it.
  */
@@ -1032,7 +1031,7 @@ settings_schema_version?: number;
  * Defaults to empty on partial stores; the load path merges in the
  * default bindings for any missing keys before the settings are used.
  */
-bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
+bindings?: Partial<{ [key in string]: ShortcutBinding }>; audio_feedback?: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; show_whats_new_on_update?: boolean; 
 /**
  * The app version whose What's New the user has already seen. Fresh installs
  * default to the current version (nothing is "new" to them). Existing users
@@ -1056,7 +1055,7 @@ reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: strin
  * `device_id` when available (or its name for backends such as Metal),
  * never from the process-local device registry index.
  */
-transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; noise_suppression?: boolean; keyword_actions_enabled?: boolean; log_transcriptions?: boolean; vad_enabled?: boolean;
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; noise_suppression?: boolean; keyword_actions_enabled?: boolean; log_transcriptions?: boolean; vad_enabled?: boolean; 
 /**
  * Experimental detector implementation. Silero remains the stable default.
  */

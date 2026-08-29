@@ -986,6 +986,12 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
+        "transcribe_with_push_to_talk".to_string(),
+        Arc::new(TranscribeAction {
+            post_process: false,
+        }) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
         "cancel".to_string(),
         Arc::new(CancelAction) as Arc<dyn ShortcutAction>,
     );
@@ -1000,7 +1006,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 mod tests {
     use super::{
         complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
-        strip_keyword_action, strip_think_block,
+        strip_keyword_action, strip_think_block, ACTION_MAP,
     };
     use crate::settings::OverlayStyle;
     use std::future;
@@ -1117,5 +1123,28 @@ mod tests {
         assert!(!should_use_streaming_overlay(OverlayStyle::Live, false));
         assert!(!should_use_streaming_overlay(OverlayStyle::Minimal, true));
         assert!(!should_use_streaming_overlay(OverlayStyle::None, true));
+    }
+
+    #[test]
+    fn action_map_contains_transcribe_with_push_to_talk() {
+        assert!(
+            ACTION_MAP.contains_key("transcribe_with_push_to_talk"),
+            "ACTION_MAP must have an entry for transcribe_with_push_to_talk"
+        );
+    }
+
+    #[test]
+    fn action_map_contains_all_expected_bindings() {
+        for id in &[
+            "transcribe",
+            "transcribe_with_post_process",
+            "transcribe_with_push_to_talk",
+            "cancel",
+        ] {
+            assert!(
+                ACTION_MAP.contains_key(*id),
+                "ACTION_MAP is missing expected binding '{id}'"
+            );
+        }
     }
 }

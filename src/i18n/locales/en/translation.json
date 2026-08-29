@@ -185,6 +185,10 @@
           "transcribe_with_post_process": {
             "name": "Post-Processing Hotkey",
             "description": "Optional: A dedicated hotkey that always applies AI post-processing to your transcription."
+          },
+          "transcribe_with_push_to_talk": {
+            "name": "Push-to-Talk Shortcut",
+            "description": "Hold to record, release to transcribe. Optional: leave unset to use toggle mode only."
           }
         },
         "errors": {
@@ -205,10 +209,6 @@
         "searchPlaceholder": "Search languages...",
         "noResults": "No languages found",
         "auto": "Auto"
-      },
-      "pushToTalk": {
-        "label": "Push To Talk",
-        "description": "Hold to record, release to stop"
       }
     },
     "models": {
