@@ -306,7 +306,7 @@ pub async fn play_test_sound(app: AppHandle, sound_type: String) {
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_clamshell_microphone(app: AppHandle, device_name: String) -> Result<(), String> {
+pub async fn set_clamshell_microphone(app: AppHandle, device_name: String) -> Result<(), String> {
     let mut settings = get_settings(&app);
     settings.clamshell_microphone = if device_name == "default" {
         None
@@ -314,7 +314,19 @@ pub fn set_clamshell_microphone(app: AppHandle, device_name: String) -> Result<(
         Some(device_name)
     };
     write_settings(&app, settings);
-    Ok(())
+
+    // Re-resolve the effective device now, not just next time the stream
+    // happens to restart on its own — this is what makes the clamshell
+    // warning toast's own remediation ("go configure a clamshell mic")
+    // actually take effect immediately, including in always-on mode.
+    // update_selected_device can restart the cpal stream (blocking
+    // CoreAudio) — run it on a blocking thread, not inline on the
+    // webview/main run loop.
+    let rm = app.state::<Arc<AudioRecordingManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || rm.update_selected_device())
+        .await
+        .map_err(|e| format!("audio task join failed: {}", e))?
+        .map_err(|e| format!("Failed to update selected device: {}", e))
 }
 
 #[tauri::command]

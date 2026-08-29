@@ -379,8 +379,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                     return;
                 }
                 let app_clone = app.clone();
-                std::thread::spawn(move || {
+                // set_clamshell_microphone is async (it live-restarts the cpal
+                // stream), so this needs Tauri's async runtime rather than a
+                // plain OS thread that has no executor to `.await` on.
+                tauri::async_runtime::spawn(async move {
                     match commands::audio::set_clamshell_microphone(app_clone.clone(), device_name)
+                        .await
                     {
                         Ok(()) => log::info!("Clamshell microphone changed via tray."),
                         Err(e) => {
