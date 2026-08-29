@@ -25,7 +25,7 @@ use crate::managers::history::{HistoryEntry, HistoryManager};
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings;
-use crate::tray_i18n::get_tray_translations;
+use crate::tray_i18n::{get_tray_translations, TrayStrings};
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -467,21 +467,27 @@ fn version_label() -> String {
     }
 }
 
+/// Returns `value` unless it's empty (build.rs emits `""` for a `tray.*` key
+/// a locale hasn't translated yet), in which case falls back to the English
+/// string picked out by `pick` — rather than rendering a blank menu item or
+/// submenu title.
+fn or_en_fallback(value: &str, pick: impl FnOnce(&TrayStrings) -> &String) -> String {
+    if value.is_empty() {
+        pick(&get_tray_translations(Some("en".to_string()))).clone()
+    } else {
+        value.to_string()
+    }
+}
+
 /// Builds the tray menu and tooltip for the given inputs. Pure with respect
 /// to app state: everything it depends on is in `inputs`.
 fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri::Wry>, String)> {
     let strings = get_tray_translations(Some(inputs.locale.clone()));
 
     // Secure Input warning entry (macOS): clicking opens the settings window
-    // where the full warning banner explains the situation. Locales that
-    // haven't translated the key yet get the English string rather than a
-    // blank menu item (build.rs emits "" for missing keys).
+    // where the full warning banner explains the situation.
     let secure_input_warning = if inputs.warning {
-        let label = if strings.secure_input_warning.is_empty() {
-            get_tray_translations(Some("en".to_string())).secure_input_warning
-        } else {
-            strings.secure_input_warning.clone()
-        };
+        let label = or_en_fallback(&strings.secure_input_warning, |s| &s.secure_input_warning);
         Some(MenuItem::with_id(
             app,
             "secure_input_warning",
@@ -571,11 +577,17 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
         // Mic submenu — label lists every input device, with the active one
         // checked. Rebuilt from `inputs.mic_devices` each time the idle menu
         // is (re)built, so it stays in sync with connects/disconnects.
-        let mic_submenu = Submenu::with_id(app, "mic_submenu", &strings.microphone, true)?;
+        let mic_default_label = or_en_fallback(&strings.mic_default, |s| &s.mic_default);
+        let mic_submenu = Submenu::with_id(
+            app,
+            "mic_submenu",
+            or_en_fallback(&strings.microphone, |s| &s.microphone),
+            true,
+        )?;
         let default_mic_item = CheckMenuItem::with_id(
             app,
             "mic_default_select:default",
-            &strings.mic_default,
+            &mic_default_label,
             true,
             inputs.selected_microphone.is_none(),
             None::<&str>,
@@ -596,12 +608,16 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
 
         #[cfg(target_os = "macos")]
         let clamshell_mic_submenu = {
-            let submenu =
-                Submenu::with_id(app, "clamshell_mic_submenu", &strings.lid_closed_mic, true)?;
+            let submenu = Submenu::with_id(
+                app,
+                "clamshell_mic_submenu",
+                or_en_fallback(&strings.lid_closed_mic, |s| &s.lid_closed_mic),
+                true,
+            )?;
             let default_item = CheckMenuItem::with_id(
                 app,
                 "mic_clamshell_select:default",
-                &strings.mic_default,
+                &mic_default_label,
                 true,
                 inputs.clamshell_microphone.is_none(),
                 None::<&str>,
@@ -726,7 +742,10 @@ pub fn copy_last_transcript(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{last_transcript_text, load_tray_icon, MenuInputs, TrayDesired, TrayIconState};
+    use super::{
+        last_transcript_text, load_tray_icon, or_en_fallback, MenuInputs, TrayDesired,
+        TrayIconState,
+    };
     use crate::managers::history::HistoryEntry;
 
     fn build_entry(transcription: &str, post_processed: Option<&str>) -> HistoryEntry {
@@ -773,6 +792,20 @@ mod tests {
     #[test]
     fn tray_icon_resolution_failure_is_returned_instead_of_panicking() {
         assert!(load_tray_icon(Err(tauri::Error::UnknownPath)).is_err());
+    }
+
+    #[test]
+    fn or_en_fallback_keeps_a_translated_value() {
+        assert_eq!(or_en_fallback("Mikrofon", |s| &s.microphone), "Mikrofon");
+    }
+
+    #[test]
+    fn or_en_fallback_falls_back_to_english_when_empty() {
+        // build.rs emits "" for a tray.* key a locale hasn't translated yet —
+        // must not surface as a blank menu item/submenu title.
+        let english = or_en_fallback("", |s| &s.microphone);
+        assert!(!english.is_empty());
+        assert_eq!(english, super::get_tray_translations(None).microphone);
     }
 
     #[test]
