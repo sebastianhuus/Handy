@@ -349,20 +349,24 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                     Some(name) => *name == device_name,
                 };
                 if already_selected {
+                    // muda already flipped this item's native checkbox on
+                    // click, before we ever saw the event. Nothing to
+                    // change in settings, but force a resync so the tray
+                    // reapplies the (unchanged) desired state and the
+                    // checkbox corrects itself back to checked.
+                    tray::force_resync_menu(app);
                     return;
                 }
                 let app_clone = app.clone();
                 // set_selected_microphone is async (it live-restarts the cpal
                 // stream), so this needs Tauri's async runtime rather than a
-                // plain OS thread that has no executor to `.await` on.
+                // plain OS thread that has no executor to `.await` on. It
+                // resyncs the tray itself on completion, so no need to here.
                 tauri::async_runtime::spawn(async move {
-                    match commands::audio::set_selected_microphone(app_clone.clone(), device_name)
-                        .await
-                    {
+                    match commands::audio::set_selected_microphone(app_clone, device_name).await {
                         Ok(()) => log::info!("Microphone changed via tray."),
                         Err(e) => log::error!("Failed to change microphone via tray: {}", e),
                     }
-                    tray::update_tray_menu(&app_clone);
                 });
             }
             id if id.starts_with("mic_clamshell_select:") => {
@@ -376,22 +380,22 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                     Some(name) => *name == device_name,
                 };
                 if already_selected {
+                    // See the matching comment in the mic_default_select arm.
+                    tray::force_resync_menu(app);
                     return;
                 }
                 let app_clone = app.clone();
                 // set_clamshell_microphone is async (it live-restarts the cpal
                 // stream), so this needs Tauri's async runtime rather than a
-                // plain OS thread that has no executor to `.await` on.
+                // plain OS thread that has no executor to `.await` on. It
+                // resyncs the tray itself on completion, so no need to here.
                 tauri::async_runtime::spawn(async move {
-                    match commands::audio::set_clamshell_microphone(app_clone.clone(), device_name)
-                        .await
-                    {
+                    match commands::audio::set_clamshell_microphone(app_clone, device_name).await {
                         Ok(()) => log::info!("Clamshell microphone changed via tray."),
                         Err(e) => {
                             log::error!("Failed to change clamshell microphone via tray: {}", e)
                         }
                     }
-                    tray::update_tray_menu(&app_clone);
                 });
             }
             id if id.starts_with("model_select:") => {

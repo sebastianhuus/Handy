@@ -227,10 +227,19 @@ pub async fn set_selected_microphone(app: AppHandle, device_name: String) -> Res
     // can restart the cpal stream (blocking CoreAudio) — run it on a blocking
     // thread, not inline on the webview/main run loop.
     let rm = app.state::<Arc<AudioRecordingManager>>().inner().clone();
-    tokio::task::spawn_blocking(move || rm.update_selected_device())
+    let result = tokio::task::spawn_blocking(move || rm.update_selected_device())
         .await
-        .map_err(|e| format!("audio task join failed: {}", e))?
-        .map_err(|e| format!("Failed to update selected device: {}", e))
+        .map_err(|e| format!("audio task join failed: {}", e))
+        .and_then(|r| r.map_err(|e| format!("Failed to update selected device: {}", e)));
+
+    // Keep the tray's checkmark in sync regardless of outcome — the setting
+    // was already persisted above even if the stream restart itself failed.
+    // force_resync_menu (not update_tray_menu) because this is also reached
+    // from a redundant re-selection where the computed MenuInputs wouldn't
+    // differ from what's applied, which the normal diff would skip.
+    crate::tray::force_resync_menu(&app);
+
+    result
 }
 
 #[tauri::command]
@@ -323,10 +332,16 @@ pub async fn set_clamshell_microphone(app: AppHandle, device_name: String) -> Re
     // CoreAudio) — run it on a blocking thread, not inline on the
     // webview/main run loop.
     let rm = app.state::<Arc<AudioRecordingManager>>().inner().clone();
-    tokio::task::spawn_blocking(move || rm.update_selected_device())
+    let result = tokio::task::spawn_blocking(move || rm.update_selected_device())
         .await
-        .map_err(|e| format!("audio task join failed: {}", e))?
-        .map_err(|e| format!("Failed to update selected device: {}", e))
+        .map_err(|e| format!("audio task join failed: {}", e))
+        .and_then(|r| r.map_err(|e| format!("Failed to update selected device: {}", e)));
+
+    // Keep the tray's checkmark in sync regardless of outcome — see the
+    // matching comment in set_selected_microphone.
+    crate::tray::force_resync_menu(&app);
+
+    result
 }
 
 #[tauri::command]

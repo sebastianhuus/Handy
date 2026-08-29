@@ -496,6 +496,27 @@ impl AudioRecordingManager {
         *self.cached_device_names.lock().unwrap() = names;
     }
 
+    /// The microphone name currently in effect for recording — the
+    /// clamshell-configured device when the lid is closed and one is set,
+    /// otherwise the selected microphone (or `None` for system default).
+    /// Distinct from `settings.selected_microphone`, which is just the
+    /// non-clamshell preference and would be wrong with the lid closed.
+    /// Used by the tray so its Microphone submenu checkmark reflects what's
+    /// actually recording, not just what's configured.
+    ///
+    /// Not cached like `cached_input_device_names` — lid state can flip
+    /// essentially instantly, and a stale value here would reintroduce the
+    /// exact mismatch this method exists to fix. Only costs anything
+    /// (`desired_microphone`'s `ioreg` shell-out, ~10-20ms) for the subset
+    /// of users who've configured a clamshell microphone.
+    pub fn effective_microphone_name(&self) -> Option<String> {
+        let settings = get_settings(&self.app_handle);
+        match self.desired_microphone(&settings) {
+            DesiredMicrophone::Default => None,
+            DesiredMicrophone::Selected(name) | DesiredMicrophone::Clamshell(name) => Some(name),
+        }
+    }
+
     fn resolve_microphone_device(&self, settings: &AppSettings) -> MicrophoneResolution {
         let desired = self.desired_microphone(settings);
         let (device_name, selected_microphone) = match desired {
@@ -1194,6 +1215,11 @@ pub fn start_device_watcher(app: AppHandle) {
                     debug!("Audio device list changed, notifying frontend");
                     publish_device_names(&app, &current);
                     let _ = app.emit("audio-devices-changed", ());
+                    // The tray's mic submenu otherwise only self-heals on
+                    // the next unrelated sync (recording start/stop, model
+                    // change, ...) — resync now so a hot-plug shows up
+                    // immediately if the user opens the tray right after.
+                    crate::tray::update_tray_menu(&app);
                     known = current;
                 }
             }

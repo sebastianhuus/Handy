@@ -64,9 +64,17 @@ struct MenuInputs {
     downloaded_models: Vec<(String, String)>,
     /// Names of available input devices, in system enumeration order.
     mic_devices: Vec<String>,
-    /// `None` means "use the OS default input device".
-    selected_microphone: Option<String>,
+    /// The microphone actually in effect right now — the clamshell-resolved
+    /// device when the lid is closed and one is configured, otherwise the
+    /// selected microphone. `None` means "use the OS default input device".
+    /// Distinct from `settings.selected_microphone`, which is just the
+    /// non-clamshell preference and wouldn't reflect reality with the lid
+    /// closed. Drives the Microphone submenu's checkmark.
+    effective_microphone: Option<String>,
     /// Lid-closed override microphone (macOS only). `None` means unconfigured.
+    /// This is the raw setting, not resolved against lid state — it drives
+    /// the Lid Closed Mic submenu's own checkmark (which device to use *in*
+    /// clamshell mode), a separate question from `effective_microphone`.
     clamshell_microphone: Option<String>,
     locale: String,
     update_checks_enabled: bool,
@@ -238,6 +246,24 @@ pub fn update_tray_menu(app: &AppHandle) {
     sync_tray(app);
 }
 
+/// Forces the next apply to rebuild the native menu even if the computed
+/// `MenuInputs` are unchanged from what's already applied — used to correct
+/// muda's own native checkbox toggle on click, which can desync the visible
+/// state from `applied_menu` without the underlying settings changing (a
+/// re-click of an already-selected mic submenu item).
+///
+/// Most callers should use `update_tray_menu` instead, which correctly skips
+/// the native call when nothing changed; bypassing that check on every call
+/// would defeat the tray-disappearance mitigation this module exists for
+/// (see the module doc comment) — use this only where that specific desync
+/// can happen.
+pub fn force_resync_menu(app: &AppHandle) {
+    if let Some(state) = app.try_state::<TrayState>() {
+        state.lock().applied_menu = None;
+    }
+    sync_tray(app);
+}
+
 /// Records the current desired tray state and schedules one apply on the main
 /// thread (or lets an already-pending apply pick it up). Never blocks on the
 /// main thread.
@@ -335,9 +361,15 @@ fn compute_desired(app: &AppHandle, icon_state: TrayIconState) -> TrayDesired {
     // enumerating devices here — a full cpal enumeration costs ~40-110ms
     // (see AudioRecordingManager::cached_device's doc comment), and this runs
     // on every tray sync, including the record-start hot path.
-    let mic_devices: Vec<String> = app
-        .state::<Arc<AudioRecordingManager>>()
-        .cached_input_device_names();
+    let recording_manager = app.state::<Arc<AudioRecordingManager>>();
+    let mic_devices = recording_manager.cached_input_device_names();
+    // Not cached, unlike mic_devices: lid state can flip essentially
+    // instantly, so a stale value here would reintroduce the exact
+    // configured-vs-effective mismatch this field exists to avoid. Only
+    // costs anything (~10-20ms, an `ioreg` shell-out) for the subset of
+    // users who've actually configured a clamshell microphone — see
+    // AudioRecordingManager::effective_microphone_name's doc comment.
+    let effective_microphone = recording_manager.effective_microphone_name();
 
     TrayDesired {
         icon_path: get_icon_path(theme, icon_state, warning),
@@ -348,7 +380,7 @@ fn compute_desired(app: &AppHandle, icon_state: TrayIconState) -> TrayDesired {
             selected_model: settings.selected_model,
             downloaded_models,
             mic_devices,
-            selected_microphone: settings.selected_microphone,
+            effective_microphone,
             clamshell_microphone: settings.clamshell_microphone,
             locale: settings.app_language,
             update_checks_enabled: settings.update_checks_enabled,
@@ -591,7 +623,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
             "mic_default_select:default",
             &mic_default_label,
             true,
-            inputs.selected_microphone.is_none(),
+            inputs.effective_microphone.is_none(),
             None::<&str>,
         )?;
         mic_submenu.append(&default_mic_item)?;
@@ -602,7 +634,7 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
                 &item_id,
                 device,
                 true,
-                inputs.selected_microphone.as_deref() == Some(device.as_str()),
+                inputs.effective_microphone.as_deref() == Some(device.as_str()),
                 None::<&str>,
             )?;
             mic_submenu.append(&item)?;
@@ -772,7 +804,7 @@ mod tests {
             selected_model: "small".to_string(),
             downloaded_models: vec![("small".to_string(), "Small".to_string())],
             mic_devices: vec!["Built-in Microphone".to_string()],
-            selected_microphone: None,
+            effective_microphone: None,
             clamshell_microphone: None,
             locale: "en".to_string(),
             update_checks_enabled: true,
