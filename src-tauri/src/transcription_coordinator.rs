@@ -107,12 +107,16 @@ enum Stage {
 enum PressOutcome {
     /// Nothing is recording — begin a new recording under this binding.
     Start,
-    /// A PTT recording from a *different* binding is in progress. handy-keys
-    /// dispatches chorded bindings order-independently, so pressing the
-    /// keys in either order can fire the shorter binding first and the
-    /// longer one second (or vice versa). Upgrade to toggle mode so the
-    /// first binding's key-release no longer stops it — only an explicit
-    /// stop press (from any transcribe binding) will now end it.
+    /// A PTT recording is in progress and a *different* binding was just
+    /// pressed. Since only one binding can ever be the dedicated PTT binding
+    /// (`is_ptt` is derived from a fixed binding id, not a per-recording
+    /// choice), the active recording here is always that one binding, and
+    /// "different" always means some other, non-PTT binding — covering both
+    /// the "latch" workflow (hold PTT, tap a toggle binding to free your
+    /// hands) and an any-order chord where the PTT binding's key fires
+    /// second. Upgrade to toggle mode so the PTT key's release no longer
+    /// stops it — only an explicit stop press (from any transcribe binding)
+    /// will now end it.
     UpgradeToToggle,
     /// A toggle recording (native or upgraded) is active. Any transcribe
     /// binding press — matching or not — stops it.
@@ -125,28 +129,16 @@ enum PressOutcome {
 /// Decide what an `is_pressed` transcribe event should do.
 ///
 /// `active` is `Some((active_binding_id, is_toggle))` describing the
-/// in-progress recording, or `None` when idle. `busy` is true while the
-/// pipeline is finishing a previous transcription and must ignore input.
-fn classify_press(
-    push_to_talk: bool,
-    binding_id: &str,
-    active: Option<(&str, bool)>,
-    busy: bool,
-) -> PressOutcome {
-    if busy {
-        return PressOutcome::Ignore;
-    }
-
+/// in-progress recording, or `None` when idle. Callers only reach this once
+/// they already know the pipeline isn't busy (`Stage::Processing` is handled
+/// by an early return in `on_input` before this runs), so there is no `busy`
+/// parameter here.
+fn classify_press(binding_id: &str, active: Option<(&str, bool)>) -> PressOutcome {
     match active {
         None => PressOutcome::Start,
         Some((_, true)) => PressOutcome::CrossBindingStop,
-        Some((active_id, false)) => {
-            if push_to_talk && active_id != binding_id {
-                PressOutcome::UpgradeToToggle
-            } else {
-                PressOutcome::Ignore
-            }
-        }
+        Some((active_id, false)) if active_id == binding_id => PressOutcome::Ignore,
+        Some((_, false)) => PressOutcome::UpgradeToToggle,
     }
 }
 
@@ -352,91 +344,30 @@ impl CoordinatorState {
             _ => None,
         };
 
-        if input.push_to_talk {
-            if input.is_pressed {
-                match classify_press(true, &input.binding_id, active, false) {
-                    PressOutcome::Start => {
-                        return Some(self.begin_recording(
-                            input.binding_id,
-                            input.hotkey_string,
-                            true,
-                            now,
-                        ));
-                    }
-                    PressOutcome::UpgradeToToggle => {
-                        if let Stage::Recording {
-                            binding_id: active_id,
-                            started_at,
-                        } = &self.stage
-                        {
-                            let active_id = active_id.clone();
-                            let started_at = *started_at;
-                            debug!(
-                                "PTT '{active_id}' upgraded to toggle mode by '{}'",
-                                input.binding_id
-                            );
-                            self.stage = Stage::RecordingToggle {
-                                binding_id: active_id,
-                                started_at,
-                            };
-                        }
-                    }
-                    PressOutcome::CrossBindingStop => {
-                        if let Stage::RecordingToggle {
-                            binding_id: active_id,
-                            started_at,
-                        } = &self.stage
-                        {
-                            let active_id = active_id.clone();
-                            let started_at = *started_at;
-                            return Some(self.begin_processing(
-                                active_id,
-                                input.hotkey_string,
-                                started_at,
-                            ));
-                        }
-                    }
-                    PressOutcome::Ignore => {
-                        debug!("Ignoring PTT press for '{}'", input.binding_id);
-                    }
-                }
-            } else if let Stage::Recording {
-                binding_id: id,
-                started_at,
-            } = &self.stage
-            {
-                // Key-up only ever stops the matching PTT binding;
-                // RecordingToggle ignores key-ups.
-                if id == &input.binding_id {
-                    let started_at = *started_at;
-                    return Some(self.begin_processing(
-                        input.binding_id,
-                        input.hotkey_string,
-                        started_at,
-                    ));
-                }
-            }
-        } else if input.is_pressed {
-            // Pass `true` here (not `input.push_to_talk`, which is false for a
-            // toggle-mode binding): the upgrade decision is about whether the
-            // *active* recording is a PTT session from a different binding —
-            // classify_press already establishes that via `active`'s `false`
-            // (PTT) tag — not about whether this incoming press's own binding
-            // happens to be PTT-configured. Since PTT-ness became per-binding
-            // rather than a single global flag, a toggle-configured binding's
-            // press must be able to latch an in-progress PTT recording into
-            // toggle mode too (e.g. hold the PTT hotkey, tap a toggle hotkey to
-            // free your hands, tap it again later to stop).
-            match classify_press(true, &input.binding_id, active, false) {
+        if input.is_pressed {
+            // One shared path for both PTT and toggle presses: the decision
+            // (start / upgrade / cross-stop / ignore) only depends on which
+            // binding is pressed and what's currently recording, not on the
+            // incoming press's own mode. Only the `Start` outcome needs to
+            // know the mode, to pick which `Stage` variant to begin in.
+            match classify_press(&input.binding_id, active) {
                 PressOutcome::Start => {
                     return Some(self.begin_recording(
                         input.binding_id,
                         input.hotkey_string,
-                        false,
+                        input.push_to_talk,
                         now,
                     ));
                 }
                 PressOutcome::UpgradeToToggle => {
+                    // Reachable only when a *different* binding is pressed
+                    // while the dedicated PTT binding is recording (see
+                    // `PressOutcome::UpgradeToToggle`'s doc comment) — most
+                    // often a toggle-configured binding's press latching an
+                    // in-progress PTT session (hold the PTT hotkey, tap a
+                    // toggle hotkey to free your hands, tap it again later to
+                    // stop), but the same code also covers a PTT binding's
+                    // own key firing second in an any-order chord.
                     if let Stage::Recording {
                         binding_id: active_id,
                         started_at,
@@ -470,10 +401,25 @@ impl CoordinatorState {
                     }
                 }
                 PressOutcome::Ignore => {
-                    debug!(
-                        "Ignoring press for '{}': another binding is recording",
-                        input.binding_id
-                    );
+                    debug!("Ignoring press for '{}'", input.binding_id);
+                }
+            }
+        } else if input.push_to_talk {
+            if let Stage::Recording {
+                binding_id: id,
+                started_at,
+            } = &self.stage
+            {
+                // Key-up only ever stops the matching PTT binding;
+                // RecordingToggle ignores key-ups, and a toggle-mode
+                // binding's own release is a no-op (falls through below).
+                if id == &input.binding_id {
+                    let started_at = *started_at;
+                    return Some(self.begin_processing(
+                        input.binding_id,
+                        input.hotkey_string,
+                        started_at,
+                    ));
                 }
             }
         }
@@ -943,80 +889,39 @@ mod tests {
     const TRANSCRIBE_PP: &str = "transcribe_with_post_process";
 
     #[test]
-    fn classify_press_starts_from_idle_in_either_mode() {
-        assert_eq!(
-            classify_press(true, TRANSCRIBE, None, false),
-            PressOutcome::Start
-        );
-        assert_eq!(
-            classify_press(false, TRANSCRIBE, None, false),
-            PressOutcome::Start
-        );
+    fn classify_press_starts_from_idle() {
+        assert_eq!(classify_press(TRANSCRIBE, None), PressOutcome::Start);
     }
 
     #[test]
-    fn classify_press_ignores_everything_while_pipeline_busy() {
+    fn classify_press_ignores_redundant_same_binding_repress() {
+        // Same binding fires again while it's the one already recording
+        // (e.g. a debounce-adjacent repeat) — nothing to do here; a PTT
+        // binding's own release still stops it via on_input's separate
+        // release handling, not through this path.
         assert_eq!(
-            classify_press(true, TRANSCRIBE, None, true),
-            PressOutcome::Ignore
-        );
-        assert_eq!(
-            classify_press(false, TRANSCRIBE, Some((TRANSCRIBE, true)), true),
+            classify_press(TRANSCRIBE, Some((TRANSCRIBE, false))),
             PressOutcome::Ignore
         );
     }
 
     #[test]
-    fn classify_press_ignores_redundant_same_binding_ptt_repress() {
-        // Same PTT binding fires again while already recording (e.g. a
-        // debounce-adjacent repeat) — its own release still stops it, so
-        // there's nothing to do here.
+    fn classify_press_upgrades_active_ptt_session_regardless_of_binding_order() {
+        // The "latch" workflow, and its symmetric counterpart: a different
+        // binding's press while a PTT-style recording is active always
+        // upgrades it to toggle mode, whichever of the two binding ids is
+        // "active" and which is "incoming" — the function itself doesn't
+        // privilege either side. (In production only one binding id can
+        // ever be the one actively PTT-recording, since `is_ptt` is derived
+        // from a single fixed binding id — so only one of these two directly
+        // corresponds to a real on_input call site, but the symmetry is a
+        // property of classify_press worth locking down either way.)
         assert_eq!(
-            classify_press(true, TRANSCRIBE, Some((TRANSCRIBE, false)), false),
-            PressOutcome::Ignore
-        );
-    }
-
-    #[test]
-    fn classify_press_upgrades_ptt_to_toggle_regardless_of_chord_order() {
-        // fn (transcribe) fires first as PTT; ctrl+fn (transcribe_with_post_process)
-        // follows while it's still held.
-        assert_eq!(
-            classify_press(true, TRANSCRIBE_PP, Some((TRANSCRIBE, false)), false),
+            classify_press(TRANSCRIBE_PP, Some((TRANSCRIBE, false))),
             PressOutcome::UpgradeToToggle
         );
-        // The reverse physical order — ctrl+fn's binding fires first, then fn's —
-        // must upgrade identically. Any-order means neither binding is "the"
-        // canonical starter.
         assert_eq!(
-            classify_press(true, TRANSCRIBE, Some((TRANSCRIBE_PP, false)), false),
-            PressOutcome::UpgradeToToggle
-        );
-    }
-
-    #[test]
-    fn classify_press_raw_push_to_talk_false_never_upgrades() {
-        // Property of the pure function itself: with push_to_talk=false it
-        // never returns UpgradeToToggle, only Ignore/Start/CrossBindingStop.
-        // The coordinator's on_input never actually calls it this way for a
-        // press — see the next test and `on_input`'s toggle-press branch,
-        // which deliberately passes `true` so that a toggle-configured
-        // binding's press can still latch an active PTT session into toggle
-        // mode (PTT-ness became per-binding rather than one global flag, so
-        // a PTT recording and a toggle-configured binding can coexist).
-        assert_eq!(
-            classify_press(false, TRANSCRIBE_PP, Some((TRANSCRIBE, false)), false),
-            PressOutcome::Ignore
-        );
-    }
-
-    #[test]
-    fn classify_press_toggle_binding_press_upgrades_active_ptt_session() {
-        // The "latch" workflow: hold a PTT-configured binding, tap a
-        // different toggle-configured binding — the PTT recording upgrades
-        // to toggle mode so releasing the PTT key no longer stops it.
-        assert_eq!(
-            classify_press(true, TRANSCRIBE_PP, Some((TRANSCRIBE, false)), false),
+            classify_press(TRANSCRIBE, Some((TRANSCRIBE_PP, false))),
             PressOutcome::UpgradeToToggle
         );
     }
@@ -1025,12 +930,12 @@ mod tests {
     fn classify_press_cross_binding_stop_while_toggling() {
         // A different binding's press stops an active toggle recording...
         assert_eq!(
-            classify_press(false, TRANSCRIBE_PP, Some((TRANSCRIBE, true)), false),
+            classify_press(TRANSCRIBE_PP, Some((TRANSCRIBE, true))),
             PressOutcome::CrossBindingStop
         );
         // ...and so does the same binding pressed again (classic toggle-off).
         assert_eq!(
-            classify_press(false, TRANSCRIBE, Some((TRANSCRIBE, true)), false),
+            classify_press(TRANSCRIBE, Some((TRANSCRIBE, true))),
             PressOutcome::CrossBindingStop
         );
     }
@@ -1041,12 +946,7 @@ mod tests {
         // transcribe binding press stops it — including a third binding
         // that was never involved in starting it.
         assert_eq!(
-            classify_press(
-                true,
-                "some_other_transcribe_binding",
-                Some((TRANSCRIBE_PP, true)),
-                false
-            ),
+            classify_press("some_other_transcribe_binding", Some((TRANSCRIBE_PP, true)),),
             PressOutcome::CrossBindingStop
         );
     }
