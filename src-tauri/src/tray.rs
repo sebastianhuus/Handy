@@ -20,7 +20,7 @@
 //! a hidden tray relies on tray-icon recreating it from the last applied
 //! icon/menu/tooltip, so those must only ever be set through the applier.
 
-use crate::audio_toolkit::list_input_devices;
+use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::{HistoryEntry, HistoryManager};
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
@@ -331,11 +331,13 @@ fn compute_desired(app: &AppHandle, icon_state: TrayIconState) -> TrayDesired {
         .collect();
     downloaded_models.sort_by(|a, b| a.1.cmp(&b.1));
 
-    let mic_devices: Vec<String> = list_input_devices()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|d| d.name)
-        .collect();
+    // Read from AudioRecordingManager's watcher-populated cache rather than
+    // enumerating devices here — a full cpal enumeration costs ~40-110ms
+    // (see AudioRecordingManager::cached_device's doc comment), and this runs
+    // on every tray sync, including the record-start hot path.
+    let mic_devices: Vec<String> = app
+        .state::<Arc<AudioRecordingManager>>()
+        .cached_input_device_names();
 
     TrayDesired {
         icon_path: get_icon_path(theme, icon_state, warning),

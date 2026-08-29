@@ -406,6 +406,13 @@ pub struct AudioRecordingManager {
     /// so the retry re-enumerates. The system-default case is never cached —
     /// the recorder resolves the current default itself, cheaply.
     cached_device: Arc<Mutex<Option<(String, cpal::Device)>>>,
+    /// Names of every currently available input device, refreshed by
+    /// `start_device_watcher`'s background poll rather than enumerated
+    /// on demand. Lets callers that just need "what devices exist" (e.g. the
+    /// tray mic submenu) skip the same ~40-110ms full enumeration
+    /// `cached_device` exists to avoid — see that field's doc comment. Empty
+    /// until the watcher's first poll completes, a few ms after startup.
+    cached_device_names: Arc<Mutex<Vec<String>>>,
 }
 
 impl AudioRecordingManager {
@@ -437,6 +444,7 @@ impl AudioRecordingManager {
             recording_active: Arc::new(AtomicBool::new(false)),
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
+            cached_device_names: Arc::new(Mutex::new(Vec::new())),
         };
 
         // Always-on?  Open immediately.
@@ -473,6 +481,19 @@ impl AudioRecordingManager {
 
     pub fn invalidate_device_cache(&self) {
         *self.cached_device.lock().unwrap() = None;
+    }
+
+    /// Names of every currently available input device, as of the last
+    /// `start_device_watcher` poll. Cheap — no device enumeration, just a
+    /// clone of the cached list. See `cached_device_names`'s doc comment.
+    pub fn cached_input_device_names(&self) -> Vec<String> {
+        self.cached_device_names.lock().unwrap().clone()
+    }
+
+    /// Called by `start_device_watcher` after each poll to publish the
+    /// current device list for `cached_input_device_names` to read.
+    fn set_cached_input_device_names(&self, names: Vec<String>) {
+        *self.cached_device_names.lock().unwrap() = names;
     }
 
     fn resolve_microphone_device(&self, settings: &AppSettings) -> MicrophoneResolution {
@@ -1153,6 +1174,11 @@ pub fn start_device_watcher(app: AppHandle) {
                 .map(|d| d.name)
                 .collect();
 
+            // Publish the initial list immediately so cached_input_device_names
+            // callers (e.g. the tray mic submenu) aren't stuck reading an empty
+            // list for a full DEVICE_POLL_INTERVAL after startup.
+            publish_device_names(&app, &known);
+
             loop {
                 std::thread::sleep(DEVICE_POLL_INTERVAL);
 
@@ -1166,10 +1192,26 @@ pub fn start_device_watcher(app: AppHandle) {
 
                 if current != known {
                     debug!("Audio device list changed, notifying frontend");
+                    publish_device_names(&app, &current);
                     let _ = app.emit("audio-devices-changed", ());
                     known = current;
                 }
             }
         })
         .expect("Failed to spawn audio device watcher thread");
+}
+
+/// Publishes a freshly-polled device set to `AudioRecordingManager`'s cache
+/// for `cached_input_device_names` readers. No-ops if the manager isn't
+/// registered as Tauri state yet (shouldn't happen — it's managed before
+/// `start_device_watcher` is called — but this thread shouldn't panic over
+/// a startup-ordering change elsewhere).
+fn publish_device_names(app: &AppHandle, names: &HashSet<String>) {
+    let Some(manager) = app.try_state::<Arc<AudioRecordingManager>>() else {
+        debug!("Device watcher: AudioRecordingManager not yet registered, skipping cache update");
+        return;
+    };
+    let mut sorted: Vec<String> = names.iter().cloned().collect();
+    sorted.sort();
+    manager.set_cached_input_device_names(sorted);
 }
