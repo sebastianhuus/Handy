@@ -21,6 +21,27 @@ const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const SILERO_VAD_THRESHOLD: f32 = 0.3;
 const EARSHOT_VAD_THRESHOLD: f32 = 0.5;
 
+/// Minimum time a recording must run before its underlying CPAL stream may
+/// be torn down. Spamming start+stop (or start+cancel) faster than this
+/// starts and tears down mic streams faster than the audio pipeline can
+/// safely turn around, which has crashed the app. Single source of truth
+/// for `stop_recording`, `cancel_recording`, and
+/// `transcription_coordinator`'s own pre-dispatch wait (which blocks its
+/// single command-processing thread so queued input events serialize
+/// correctly around a stop).
+pub(crate) const MIN_RECORDING_DURATION: Duration = Duration::from_millis(150);
+
+/// Blocks the calling thread until the recording has run for at least
+/// `MIN_RECORDING_DURATION`. See that constant's doc comment.
+pub(crate) fn enforce_min_duration(started_at: Instant) {
+    let elapsed = started_at.elapsed();
+    if elapsed < MIN_RECORDING_DURATION {
+        let remaining = MIN_RECORDING_DURATION - elapsed;
+        debug!("Recording too short ({elapsed:?}); waiting {remaining:?} before stop/cancel");
+        std::thread::sleep(remaining);
+    }
+}
+
 fn set_mute(mute: bool) {
     // Expected behavior:
     // - Windows: works on most systems using standard audio drivers.
@@ -238,7 +259,12 @@ const WHISPER_SAMPLE_RATE: usize = 16000;
 #[derive(Clone, Debug)]
 pub enum RecordingState {
     Idle,
-    Recording { binding_id: String },
+    Recording {
+        binding_id: String,
+        /// Feeds the `MIN_RECORDING_DURATION` guard in `stop_recording`/
+        /// `cancel_recording`.
+        started_at: Instant,
+    },
     Stopping,
 }
 
@@ -900,6 +926,7 @@ impl AudioRecordingManager {
                             &mut state,
                             RecordingState::Recording {
                                 binding_id: binding_id.to_string(),
+                                started_at: Instant::now(),
                             },
                         );
                         debug!("Recording requested for binding {binding_id}");
@@ -1066,7 +1093,18 @@ impl AudioRecordingManager {
         match *state {
             RecordingState::Recording {
                 binding_id: ref active,
+                started_at,
             } if active == binding_id => {
+                // Defense-in-depth: transcription_coordinator's own guard
+                // already waits out MIN_RECORDING_DURATION before dispatching
+                // the Stop effect that reaches here, so this is normally a
+                // no-op check — it only matters if some future caller reaches
+                // stop_recording without going through that guard. Held
+                // across the state lock (state isn't dropped until after
+                // this), so a concurrent try_start_recording() serializes
+                // behind it rather than racing a fresh open against this
+                // stream's still-in-progress close.
+                enforce_min_duration(started_at);
                 self.set_state(&mut state, RecordingState::Stopping);
                 drop(state);
 
@@ -1152,7 +1190,18 @@ impl AudioRecordingManager {
         let mut state = self.state.lock().unwrap();
 
         match *state {
-            RecordingState::Recording { .. } => {
+            RecordingState::Recording { started_at, .. } => {
+                // cancel_current_operation's callers (the cancel hotkey, tray
+                // menu item, --cancel CLI flag, cancel_operation command) used
+                // to bypass MIN_RECORDING_DURATION entirely by calling this
+                // directly instead of going through the coordinator's guarded
+                // stop path — rapid start->cancel->start->cancel spam still
+                // did unguarded rapid CPAL open/close. Enforcing it here,
+                // before the state lock is released, closes that for every
+                // caller at once and serializes a concurrent
+                // try_start_recording() behind it the same way stop_recording
+                // does (see the comment there).
+                enforce_min_duration(started_at);
                 self.set_state(&mut state, RecordingState::Idle);
                 drop(state);
 
@@ -1240,4 +1289,56 @@ fn publish_device_names(app: &AppHandle, names: &HashSet<String>) {
     let mut sorted: Vec<String> = names.iter().cloned().collect();
     sorted.sort();
     manager.set_cached_input_device_names(sorted);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{enforce_min_duration, MIN_RECORDING_DURATION};
+    use std::time::{Duration, Instant};
+
+    // -----------------------------------------------------------------
+    // enforce_min_duration: MIN_RECORDING_DURATION guard.
+    //
+    // Spamming a transcription hotkey (or the cancel binding) was crashing
+    // the app via rapid CPAL mic stream open/close cycles; a stop or cancel
+    // requested too soon after start must be deferred until the window
+    // elapses, and must not delay one that already satisfies it. Pure
+    // function, so this needs no AudioRecordingManager/AppHandle — the
+    // manager itself has no test harness (would need a real cpal device).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn enforce_min_duration_defers_a_stop_requested_immediately_after_start() {
+        let started_at = Instant::now();
+        let before = Instant::now();
+        enforce_min_duration(started_at);
+        let waited = before.elapsed();
+
+        // Allow a little slack for scheduler jitter, but it must have
+        // waited most of the window — proving the early stop was deferred
+        // rather than honored immediately.
+        assert!(
+            waited >= MIN_RECORDING_DURATION.saturating_sub(Duration::from_millis(20)),
+            "expected an early stop to be deferred close to {MIN_RECORDING_DURATION:?}, only waited {waited:?}"
+        );
+        // And that the deferred stop does eventually return (fire) rather
+        // than block forever.
+        assert!(
+            waited < MIN_RECORDING_DURATION + Duration::from_millis(500),
+            "deferred stop should fire shortly after the window elapses, waited {waited:?}"
+        );
+    }
+
+    #[test]
+    fn enforce_min_duration_does_not_delay_a_stop_after_window_elapsed() {
+        let started_at = Instant::now() - MIN_RECORDING_DURATION - Duration::from_millis(50);
+        let before = Instant::now();
+        enforce_min_duration(started_at);
+        let waited = before.elapsed();
+
+        assert!(
+            waited < Duration::from_millis(20),
+            "a stop requested after MIN_RECORDING_DURATION already elapsed must not block, waited {waited:?}"
+        );
+    }
 }

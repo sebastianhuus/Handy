@@ -1,5 +1,5 @@
 use crate::actions::ACTION_MAP;
-use crate::managers::audio::AudioRecordingManager;
+use crate::managers::audio::{enforce_min_duration, AudioRecordingManager};
 use log::{debug, error, warn};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Sender};
@@ -10,14 +10,6 @@ use tauri::{AppHandle, Manager};
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
 const RELEASE_GRACE: Duration = Duration::from_millis(50);
-
-/// Minimum time a recording must run before a stop is honored. Without this,
-/// spamming a transcription hotkey starts and tears down CPAL mic streams
-/// faster than the audio pipeline can safely turn around, which has crashed
-/// the app. A stop requested earlier blocks the coordinator thread for the
-/// remainder of the window; commands that queue up during the sleep are
-/// processed afterwards.
-const MIN_RECORDING_DURATION: Duration = Duration::from_millis(150);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PttAction {
@@ -139,17 +131,6 @@ fn classify_press(binding_id: &str, active: Option<(&str, bool)>) -> PressOutcom
         Some((_, true)) => PressOutcome::CrossBindingStop,
         Some((active_id, false)) if active_id == binding_id => PressOutcome::Ignore,
         Some((_, false)) => PressOutcome::UpgradeToToggle,
-    }
-}
-
-/// Block the coordinator thread until the active recording has run for at
-/// least `MIN_RECORDING_DURATION`. See the constant's doc comment.
-fn enforce_min_duration(started_at: Instant) {
-    let elapsed = started_at.elapsed();
-    if elapsed < MIN_RECORDING_DURATION {
-        let remaining = MIN_RECORDING_DURATION - elapsed;
-        debug!("Recording too short ({elapsed:?}); waiting {remaining:?} before stop");
-        thread::sleep(remaining);
     }
 }
 
@@ -948,50 +929,6 @@ mod tests {
         assert_eq!(
             classify_press("some_other_transcribe_binding", Some((TRANSCRIBE_PP, true)),),
             PressOutcome::CrossBindingStop
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // enforce_min_duration: MIN_RECORDING_DURATION guard.
-    //
-    // Spamming a transcription hotkey was crashing the app via rapid CPAL
-    // mic stream open/close cycles; a stop requested too soon after start
-    // must be deferred until the window elapses, and must not delay a stop
-    // that already satisfies it.
-    // -----------------------------------------------------------------
-
-    #[test]
-    fn enforce_min_duration_defers_a_stop_requested_immediately_after_start() {
-        let started_at = Instant::now();
-        let before = Instant::now();
-        enforce_min_duration(started_at);
-        let waited = before.elapsed();
-
-        // Allow a little slack for scheduler jitter, but it must have
-        // waited most of the window — proving the early stop was deferred
-        // rather than honored immediately.
-        assert!(
-            waited >= MIN_RECORDING_DURATION.saturating_sub(Duration::from_millis(20)),
-            "expected an early stop to be deferred close to {MIN_RECORDING_DURATION:?}, only waited {waited:?}"
-        );
-        // And that the deferred stop does eventually return (fire) rather
-        // than block forever.
-        assert!(
-            waited < MIN_RECORDING_DURATION + Duration::from_millis(500),
-            "deferred stop should fire shortly after the window elapses, waited {waited:?}"
-        );
-    }
-
-    #[test]
-    fn enforce_min_duration_does_not_delay_a_stop_after_window_elapsed() {
-        let started_at = Instant::now() - MIN_RECORDING_DURATION - Duration::from_millis(50);
-        let before = Instant::now();
-        enforce_min_duration(started_at);
-        let waited = before.elapsed();
-
-        assert!(
-            waited < Duration::from_millis(20),
-            "a stop requested after MIN_RECORDING_DURATION already elapsed must not block, waited {waited:?}"
         );
     }
 

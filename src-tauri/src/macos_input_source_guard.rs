@@ -92,6 +92,23 @@ static ARMED: AtomicBool = AtomicBool::new(false);
 /// APIs) asserts it runs on the main queue. Calling it from a background
 /// worker thread produces "error messaging the mach port for
 /// IMKCFRunLoopWakeUpReliable" log spam and occasional crashes.
+///
+/// Known race, accepted as a platform constraint: `arm()`'s caller is
+/// always a background thread (the shortcut-handling pipeline never runs
+/// on the main thread), so the initial snapshot above is dispatched
+/// asynchronously relative to the physical key event that triggered it —
+/// under main-thread contention it can run *after* macOS has already
+/// flipped the input source, so the snapshot captures the already-changed
+/// value and nothing gets reverted. This can't be removed without either a
+/// blocking main-thread dispatch (Tauri exposes none) or moving the whole
+/// shortcut pipeline onto the main thread (a much larger, riskier change
+/// than this guard). A background-polled cache of the current input
+/// source (mirroring `start_device_watcher`'s audio-device polling) was
+/// considered and rejected: it trades this rare missed-revert for a more
+/// frequent wrong-revert — undoing a legitimate manual input-source change
+/// the user made shortly before tapping the hotkey — which is a worse
+/// failure mode, not a fix. Not revisited without a much larger
+/// restructuring of the shortcut pipeline's threading.
 pub fn arm(app: &AppHandle) {
     if ARMED.swap(true, Ordering::AcqRel) {
         // A watcher is already running; it will catch any change that
