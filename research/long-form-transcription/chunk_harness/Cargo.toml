@@ -1,0 +1,23 @@
+[package]
+name = "chunk_harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Research CLI: chunk a long WAV file and transcribe each chunk with Parakeet, for the long-form/meeting-mode rolling-window EDA. Not part of the Handy app build -- standalone crate, see ../SPEC.md."
+
+# Deliberately NOT a member of src-tauri's build -- this lives outside the
+# main Cargo.toml/workspace so it can never affect the shipped app, and has
+# no [workspace] table of its own so `cargo` treats it as an independent
+# crate rooted here.
+
+[dependencies]
+# Same transcribe-rs version and feature set src-tauri/Cargo.toml pins for
+# the Parakeet (ONNX) engine -- see that file's dependency comment. No
+# platform-specific transcribe-cpp/whisper backends needed here: this
+# harness only exercises the Parakeet path.
+transcribe-rs = { version = "0.3.8", features = ["onnx"] }
+hound = "3.5.1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1.0.95"

@@ -1,0 +1,5 @@
+# EDA environment for the long-form/meeting-mode transcription research.
+# pip install -r requirements.txt
+marimo>=0.9
+pytest>=8
+matplotlib>=3.8
