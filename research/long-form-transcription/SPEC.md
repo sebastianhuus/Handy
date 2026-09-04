@@ -252,6 +252,30 @@ needed):
   controlled before/after numbers and what residual gap remains (genuine
   per-chunk misrecognition on technical terms, not fixable by rule-based
   post-processing).
+- **Engine comparison**: is there a locally-runnable model that beats
+  Parakeet-int8 (what Handy ships) for a notetaker feature where
+  post-processing speed doesn't matter? Built `model_harness/` -- a
+  pure-Python harness using NeMo (each model's reference implementation)
+  rather than `transcribe-rs`'s ONNX port, deliberately decoupled from
+  `chunk_harness/` pending a decision, emitting the same run-JSON schema so
+  all existing tooling works unchanged -- and `eda/evaluate.py`, a
+  reusable/tested/deterministic metrics CLI replacing the ad-hoc scripts
+  used earlier in this research. Compared ONNX-int8 Parakeet-v3 (Rust) against
+  NeMo/fp32 Parakeet-v2, Parakeet-v3, and Canary-1B-v2, full 46-minute
+  recording, real WER against the Wispr reference. **Result, after an
+  initial overclaim from a truncated slice got corrected by the
+  full-document numbers (see `eda/real_runs/FINDINGS.md` for the
+  correction, kept on record deliberately)**: NeMo/fp32 reliably produces
+  zero repetition-artifacts (vs. 20-42 via ONNX-int8) and better merge-
+  boundary confidence, but once the repeat-collapse fix above is applied to
+  the ONNX-int8 path, all four configurations land within ~2 WER points of
+  each other -- inside the noise of a single-recording, non-hand-verified-
+  reference comparison. **Switching the app's runtime or model is not
+  justified by this data** -- the already-implemented post-processing fix
+  captures most of the available gain, and alternatives cost 2-7x the
+  compute for no clear matching benefit. Canary-1B-v2 specifically: no WER
+  advantage found despite topping general leaderboards, and by far the
+  slowest of the four (5.3x realtime vs. 19-39x).
 
 ## 8. Explicitly out of scope for this research phase
 

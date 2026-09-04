@@ -30,10 +30,6 @@ cd research/long-form-transcription/chunk_harness
 cargo build --release
 ```
 
-> This has been checked against `transcribe-rs`'s own source, not compiled
-> in the sandbox that produced it (crates.io was unreachable there). Expect
-> to fix minor build errors on first real build -- see SPEC.md §7.
-
 Point `--model-dir` at a Parakeet model directory Handy has already
 downloaded (app id is `com.pais.handy` -- on Linux that's under
 `~/.local/share/com.pais.handy/models/`, macOS under `~/Library/Application
@@ -56,5 +52,38 @@ Run it again at a few other `--window-s`/`--overlap-s` values (and at
 `--overlap-s` just under `--window-s` for a control with effectively no
 merge-splicing needed) to build up a sweep, then drop a hand-checked
 `reference.txt` (plain text, next to the run JSON files) for whatever slice
-you transcribed by hand, and point the notebook's `run_dir` field at that
-directory instead of `fixtures/`.
+you transcribed by hand.
+
+## Model harness (Python / NeMo) -- for comparing candidate engines
+
+Deliberately separate from `chunk_harness/` (Rust) until a decision is made
+on whether/what to change there -- see `model_harness/README.md`. Heavy
+dependency (torch + nemo_toolkit, several GB, its own venv), but produces
+the same run-JSON schema, so everything below works on its output too.
+
+```bash
+cd research/long-form-transcription/model_harness
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+python3 run_engine.py --engine parakeet --input meeting.wav \
+    --window-s 30 --overlap-s 6 --out run.json
+# or: --engine canary --model nvidia/canary-1b-v2
+```
+
+## Evaluating a run (either harness) -- reproducible metrics, no notebook needed
+
+```bash
+cd research/long-form-transcription/eda
+python3 evaluate.py --run-dir some_directory_of_run_jsons/ \
+    --reference reference.txt --strip-fillers
+```
+
+Deterministic and dependency-free (stdlib only): same run JSON + reference
+in, same table out, on any machine. Works whether the run JSON came from
+`chunk_harness` or `model_harness`. `--reference` adds real WER (raw, and
+after `postprocess.py`'s repeat-collapse filter); without it you still get
+the proxy metrics from SPEC.md §6 (boundary confidence, words/audio-second,
+throughput). See `eda/real_runs/FINDINGS.md` for what this has found so
+far. The marimo notebook (`eda/notebooks/eda_long_form.py`) still works
+too, for interactive sweeps against `fixtures/`.

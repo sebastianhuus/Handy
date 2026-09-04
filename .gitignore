@@ -52,3 +52,6 @@ research/long-form-transcription/*.wav
 research/long-form-transcription/eda/real_runs/
 research/.wispr-dump
 research/long-form-transcription/chunk_harness/target/
+research/long-form-transcription/model_harness/.venv/
+research/long-form-transcription/model_harness/*.wav
+research/long-form-transcription/model_harness/smoke_*.json
