@@ -22,7 +22,7 @@ uv run pytest
 uv run python3 fixtures/make_synthetic_fixtures.py
 
 # Open the EDA notebook -- loads fixtures_summaries/ by default
-uv run marimo edit notebooks/eda_long_form.py
+uv run notebook
 ```
 
 ## Chunk harness (Rust / real Parakeet) -- needs a downloaded model + real audio
@@ -95,7 +95,7 @@ merged text) -- that's what the notebook below reads.
 
 ```bash
 cd research/long-form-transcription/eda
-uv run marimo edit notebooks/eda_long_form.py
+uv run notebook   # shortcut for: uv run marimo edit --no-token --watch notebooks/eda_long_form.py
 ```
 
 Loads a directory of `evaluate.py --out-dir` summaries (defaults to the

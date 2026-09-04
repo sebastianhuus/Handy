@@ -56,4 +56,5 @@ research/long-form-transcription/model_harness/.venv/
 research/long-form-transcription/model_harness/*.wav
 research/long-form-transcription/model_harness/smoke_*.json
 research/long-form-transcription/eda/.venv/
-__marimo__/
+research/long-form-transcription/eda/notebooks/__marimo__
+research/long-form-transcription/eda/notebooks/.nb_state.json

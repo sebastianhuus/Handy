@@ -20,27 +20,25 @@ def _():
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        # Long-form transcription: rolling-window EDA
+    mo.md("""
+    # Long-form transcription: rolling-window EDA
 
-        Loads **pre-computed** metrics (`evaluate.py --out-dir`'s
-        `*.summary.json` files) -- this notebook never re-runs the merge
-        algorithm or WER scoring itself, so opening it doesn't cost anyone
-        the compute of regenerating a sweep just to look at existing
-        results. Points at `fixtures_summaries/` by default (synthetic,
-        bundled, no model needed); point it at your own summaries directory
-        (e.g. `../real_runs/summaries/`, gitignored -- real recordings and
-        their transcripts stay local) to browse a real sweep instead.
+    Loads **pre-computed** metrics (`evaluate.py --out-dir`'s
+    `*.summary.json` files) -- this notebook never re-runs the merge
+    algorithm or WER scoring itself, so opening it doesn't cost anyone
+    the compute of regenerating a sweep just to look at existing
+    results. Points at `fixtures_summaries/` by default (synthetic,
+    bundled, no model needed); point it at your own summaries directory
+    (e.g. `../real_runs/summaries/`, gitignored -- real recordings and
+    their transcripts stay local) to browse a real sweep instead.
 
-        Use the **"Regenerate summaries"** section below only when you've
-        produced new run JSON (via `../chunk_harness` or
-        `../model_harness`) and actually want to re-score it -- that's the
-        one thing in this notebook that costs real compute (though
-        `evaluate.py` itself is fast; the model runs that produce its
-        input are not).
-        """
-    )
+    Use the **"Regenerate summaries"** section below only when you've
+    produced new run JSON (via `../chunk_harness` or
+    `../model_harness`) and actually want to re-score it -- that's the
+    one thing in this notebook that costs real compute (though
+    `evaluate.py` itself is fast; the model runs that produce its
+    input are not).
+    """)
     return
 
 
@@ -57,7 +55,9 @@ def _(EDA_DIR, mo):
 
 @app.cell
 def _(mo):
-    mo.md("""## Regenerate summaries (optional -- runs `evaluate.py` for you)""")
+    mo.md("""
+    ## Regenerate summaries (optional -- runs `evaluate.py` for you)
+    """)
     return
 
 
@@ -234,23 +234,21 @@ def _(mo, plt, summaries):
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Reading these plots
+    mo.md("""
+    ## Reading these plots
 
-        - **WER**: the number that actually answers "does this config
-          produce a usable transcript" -- everything else here is a proxy.
-          Only populated when the summaries were generated with
-          `--reference`.
-        - **low_confidence_rate**: fraction of chunk-to-chunk merge
-          boundaries that fell back to a lossy timestamp cut instead of a
-          confident text match. High values mean the overlap window isn't
-          reliably catching real speech overlap -- see SPEC.md §4.
-        - **realtime factor**: how many seconds of audio get transcribed
-          per second of compute. Only meaningful for comparing *engines* on
-          the *same machine* -- don't compare across machines with this.
-        """
-    )
+    - **WER**: the number that actually answers "does this config
+      produce a usable transcript" -- everything else here is a proxy.
+      Only populated when the summaries were generated with
+      `--reference`.
+    - **low_confidence_rate**: fraction of chunk-to-chunk merge
+      boundaries that fell back to a lossy timestamp cut instead of a
+      confident text match. High values mean the overlap window isn't
+      reliably catching real speech overlap -- see SPEC.md §4.
+    - **realtime factor**: how many seconds of audio get transcribed
+      per second of compute. Only meaningful for comparing *engines* on
+      the *same machine* -- don't compare across machines with this.
+    """)
     return
 
 
@@ -282,24 +280,22 @@ def _(Path, mo, run_select, summaries_dir_picker):
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## How this fits together
+    mo.md("""
+    ## How this fits together
 
-        1. Produce run JSON with `../chunk_harness` (Rust, real Parakeet)
-           or `../model_harness` (Python, NeMo -- Parakeet or Canary).
-        2. Score it: `uv run python3 evaluate.py --run-dir <dir> --reference
-           <ref> --strip-fillers --out-dir <summaries_dir>` -- or use the
-           "Regenerate summaries" section above to do the same thing from
-           here.
-        3. Point the picker at the top of this notebook at that
-           `<summaries_dir>` to browse the results.
+    1. Produce run JSON with `../chunk_harness` (Rust, real Parakeet)
+       or `../model_harness` (Python, NeMo -- Parakeet or Canary).
+    2. Score it: `uv run python3 evaluate.py --run-dir <dir> --reference
+       <ref> --strip-fillers --out-dir <summaries_dir>` -- or use the
+       "Regenerate summaries" section above to do the same thing from
+       here.
+    3. Point the picker at the top of this notebook at that
+       `<summaries_dir>` to browse the results.
 
-        See `../README.md` for the full commands and `../SPEC.md` /
-        `../eda/real_runs/FINDINGS.md` for what this research has found so
-        far.
-        """
-    )
+    See `../README.md` for the full commands and `../SPEC.md` /
+    `../eda/real_runs/FINDINGS.md` for what this research has found so
+    far.
+    """)
     return
 
 
