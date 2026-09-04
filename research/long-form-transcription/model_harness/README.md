@@ -32,20 +32,23 @@ implementation rather than reimplementing TDT/AED decoding by hand.
 
 ## Setup
 
+Managed with [uv](https://docs.astral.sh/uv/) -- `uv sync` creates
+`.venv/` and installs exactly what `uv.lock` pins (commit the lock file;
+it's what makes this reproducible across machines, not the loose version
+ranges in `pyproject.toml`).
+
 ```bash
 cd research/long-form-transcription/model_harness
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt   # heavy: pulls torch + nemo_toolkit, several GB
+uv sync   # heavy: pulls torch + nemo_toolkit, several GB
 ```
 
 ## Usage
 
 ```bash
-python3 run_engine.py --engine parakeet --model nvidia/parakeet-tdt-0.6b-v2 \
+uv run python3 run_engine.py --engine parakeet --model nvidia/parakeet-tdt-0.6b-v2 \
     --input meeting.wav --window-s 30 --overlap-s 6 --out run.json
 
-python3 run_engine.py --engine canary --model nvidia/canary-1b-v2 \
+uv run python3 run_engine.py --engine canary --model nvidia/canary-1b-v2 \
     --input meeting.wav --window-s 30 --overlap-s 6 --out run.json
 ```
 
@@ -61,10 +64,11 @@ because MPS didn't work -- try `--device mps` on Apple Silicon if you want
 the speedup (`torch.backends.mps.is_available()` was `True` on the machine
 this was built on; not otherwise validated here).
 
-Then evaluate exactly like a `chunk_harness` run:
+Then evaluate exactly like a `chunk_harness` run (from `../eda`, its own
+uv-managed environment):
 
 ```bash
-python3 ../eda/evaluate.py --run run.json --reference reference.txt --strip-fillers
+cd ../eda && uv run python3 evaluate.py --run ../model_harness/run.json --reference reference.txt --strip-fillers
 ```
 
 ## Determinism
@@ -76,9 +80,9 @@ results can still differ in the last bit or two across different hardware
 this harness does not attempt bit-exact cross-machine reproducibility,
 only same-machine determinism and cross-machine result *comparability*
 (the kind of small float noise here doesn't change word-level output in
-practice). Pin the exact package versions in `requirements.txt`
-(`pip freeze`) if stricter reproducibility across machines matters more
-than staying on latest.
+practice). `uv.lock` already pins every dependency's exact version --
+that's the reproducibility mechanism; re-run `uv lock --upgrade` only if
+you deliberately want to move forward.
 
 ## What NOT to read into this
 

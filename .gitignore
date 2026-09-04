@@ -55,3 +55,5 @@ research/long-form-transcription/chunk_harness/target/
 research/long-form-transcription/model_harness/.venv/
 research/long-form-transcription/model_harness/*.wav
 research/long-form-transcription/model_harness/smoke_*.json
+research/long-form-transcription/eda/.venv/
+__marimo__/

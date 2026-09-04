@@ -1,0 +1,10 @@
+[project]
+name = "long-form-transcription-model-harness"
+version = "0.1.0"
+description = "Pure-Python engine comparison harness (NVIDIA Parakeet-TDT, NVIDIA Canary via NeMo reference implementations), deliberately decoupled from ../chunk_harness (Rust) pending a decision on whether/what to change there. See README.md."
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "nemo_toolkit[asr]",
+    "torch",
+    "soundfile",
+]

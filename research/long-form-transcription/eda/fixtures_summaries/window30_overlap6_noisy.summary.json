@@ -1,0 +1,19 @@
+{
+  "run": "window30_overlap6_noisy",
+  "engine": "unknown",
+  "model": null,
+  "window_s": 30.0,
+  "overlap_s": 6.0,
+  "segment_timestamps": "exact",
+  "n_chunks": 2,
+  "boundaries": 1,
+  "low_confidence_count": 1,
+  "low_confidence_rate": 1.0,
+  "words_raw": 89,
+  "words_after_repeat_collapse": 89,
+  "words_per_audio_second": 2.225,
+  "total_transcribe_seconds": 0.0,
+  "realtime_factor": null,
+  "wer_raw": 0.11,
+  "wer_after_repeat_collapse": 0.11
+}

@@ -5,19 +5,24 @@ This is the "how do I run it" quick start.
 
 ## EDA (Python / marimo) -- works right now, no model needed
 
+Dependencies managed with [uv](https://docs.astral.sh/uv/) -- `uv sync`
+creates `.venv/` and installs exactly what `uv.lock` pins (commit the lock
+file; it's what makes this reproducible across machines, not the loose
+version ranges in `pyproject.toml`).
+
 ```bash
 cd research/long-form-transcription/eda
-pip install -r requirements.txt
+uv sync
 
-# Unit tests for the merge algorithm and WER scoring (14 tests, no audio/model needed)
-pytest
+# Unit tests for the merge algorithm, WER scoring, and evaluate.py (29 tests, no audio/model needed)
+uv run pytest
 
 # Regenerate the synthetic fixtures (deterministic; only needed if you edit
 # fixtures/make_synthetic_fixtures.py)
-python3 fixtures/make_synthetic_fixtures.py
+uv run python3 fixtures/make_synthetic_fixtures.py
 
-# Open the EDA notebook -- loads fixtures/ by default
-marimo edit notebooks/eda_long_form.py
+# Open the EDA notebook -- loads fixtures_summaries/ by default
+uv run marimo edit notebooks/eda_long_form.py
 ```
 
 ## Chunk harness (Rust / real Parakeet) -- needs a downloaded model + real audio
@@ -63,10 +68,9 @@ the same run-JSON schema, so everything below works on its output too.
 
 ```bash
 cd research/long-form-transcription/model_harness
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv sync   # heavy: pulls torch + nemo_toolkit, several GB
 
-python3 run_engine.py --engine parakeet --input meeting.wav \
+uv run python3 run_engine.py --engine parakeet --input meeting.wav \
     --window-s 30 --overlap-s 6 --out run.json
 # or: --engine canary --model nvidia/canary-1b-v2
 ```
@@ -75,8 +79,8 @@ python3 run_engine.py --engine parakeet --input meeting.wav \
 
 ```bash
 cd research/long-form-transcription/eda
-python3 evaluate.py --run-dir some_directory_of_run_jsons/ \
-    --reference reference.txt --strip-fillers
+uv run python3 evaluate.py --run-dir some_directory_of_run_jsons/ \
+    --reference reference.txt --strip-fillers --out-dir some_summaries_dir/
 ```
 
 Deterministic and dependency-free (stdlib only): same run JSON + reference
@@ -84,6 +88,25 @@ in, same table out, on any machine. Works whether the run JSON came from
 `chunk_harness` or `model_harness`. `--reference` adds real WER (raw, and
 after `postprocess.py`'s repeat-collapse filter); without it you still get
 the proxy metrics from SPEC.md §6 (boundary confidence, words/audio-second,
-throughput). See `eda/real_runs/FINDINGS.md` for what this has found so
-far. The marimo notebook (`eda/notebooks/eda_long_form.py`) still works
-too, for interactive sweeps against `fixtures/`.
+throughput). `--out-dir` writes one `*.summary.json` per run (plus its
+merged text) -- that's what the notebook below reads.
+
+## Browsing results (marimo notebook) -- loads pre-computed JSON, no recompute
+
+```bash
+cd research/long-form-transcription/eda
+uv run marimo edit notebooks/eda_long_form.py
+```
+
+Loads a directory of `evaluate.py --out-dir` summaries (defaults to the
+bundled, synthetic `fixtures_summaries/` -- point it at your own real
+summaries directory, e.g. `real_runs/summaries/`, to browse a real sweep).
+Opening the notebook never re-runs the merge algorithm or WER scoring
+itself -- it only reads what `evaluate.py` already wrote, so nobody pays
+that compute cost just to look at existing results. Shows a sortable
+metrics table, bar charts (WER raw vs. after repeat-collapse,
+merge-boundary confidence, throughput), and per-run merged-text tabs. A
+"Regenerate summaries" section can run `evaluate.py` for you from inside
+the notebook (a button, with the `--run-dir`/`--reference`/etc. as text
+inputs) when you've produced new run JSON and want to re-score it --
+that's the one action in the notebook that costs anything, and it's opt-in.

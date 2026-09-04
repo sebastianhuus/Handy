@@ -1,0 +1,14 @@
+[project]
+name = "long-form-transcription-eda"
+version = "0.1.0"
+description = "EDA for the rolling-window long-form/meeting transcription research -- merge algorithm, WER scoring, reproducible metrics CLI. No model/audio needed for tests; see ../SPEC.md."
+requires-python = ">=3.10"
+dependencies = [
+    "marimo>=0.9",
+    "matplotlib>=3.8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
