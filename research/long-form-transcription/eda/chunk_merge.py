@@ -116,8 +116,17 @@ def merge_chunks(chunks: Sequence[Chunk]) -> MergedTranscript:
             boundaries.append(Boundary(prev.index, nxt.index, 0, False))
             continue
 
-        tail_segs = [s for s in prev.segments if s.mid >= overlap_start]
-        head_segs = [s for s in nxt.segments if s.mid <= overlap_end]
+        # Selected by whether a segment *touches* the overlap window at all
+        # (not by midpoint): a long segment whose midpoint falls well
+        # outside the window can still genuinely extend into it -- using
+        # midpoint alone wrongly excludes it from tail_segs, which (via the
+        # empty-tail-segs branch below) can duplicate real content instead
+        # of splicing it. Confirmed against real audio on a second
+        # recording (see ../real_runs/FINDINGS.md): one long segment ending
+        # mid-overlap, re-transcribed cleanly at the start of the next
+        # chunk, showed up twice in the merged output before this fix.
+        tail_segs = [s for s in prev.segments if s.end > overlap_start]
+        head_segs = [s for s in nxt.segments if s.start < overlap_end]
         tail_words = _words(tail_segs)
         head_words = _words(head_segs)
 
@@ -160,8 +169,10 @@ def merge_chunks(chunks: Sequence[Chunk]) -> MergedTranscript:
         if drop_from_tail > 0:
             del words[-drop_from_tail:]
         words.extend(head_words[resume_from:])
-        # Anything in nxt beyond the overlap window entirely.
-        words.extend(_words([s for s in nxt.segments if s.mid > overlap_end]))
+        # Anything in nxt beyond the overlap window entirely -- the exact
+        # complement of head_segs' `start < overlap_end` above, so nothing
+        # is double-counted between the two.
+        words.extend(_words([s for s in nxt.segments if s.start >= overlap_end]))
         boundaries.append(Boundary(prev.index, nxt.index, match_words, low_confidence))
 
     return MergedTranscript(text=" ".join(words), words=words, boundaries=boundaries)

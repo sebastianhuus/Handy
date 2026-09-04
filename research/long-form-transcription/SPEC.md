@@ -216,10 +216,11 @@ needed):
 
 **Not implemented yet**:
 
-- Real WER numbers -- §2's hypothesis needs a hand-checked
-  `reference.txt` for a slice of the real recording, which doesn't exist
-  yet. Every metric gathered so far is a proxy (see `eda/real_runs/FINDINGS.md`
-  for what the proxies do and don't tell us).
+- Real WER numbers -- **update: real (if not hand-checked) WER now
+  exists**, against independent Wispr Flow transcripts for both real
+  recordings (see `eda/real_runs/FINDINGS.md`'s "Corrected results" table).
+  Still not a true hand-checked ground truth (Wispr is itself machine
+  ASR) -- that upgrade is still open, per §7's WER section above.
 - A decision on whether the merge algorithm's `MIN_MATCH_WORDS = 3`
   threshold and midpoint-cut fallback are good enough, or need the
   proper-alignment upgrade noted in §4. **Update: fixed.** The real-audio
@@ -231,6 +232,19 @@ needed):
   Now fixed in `chunk_merge.py` (take all of `head_segs` when `tail_segs`
   is empty) with a regression test built from the real bug
   (`eda/tests/test_chunk_merge.py::test_asymmetric_empty_tail_keeps_all_of_head`).
+  **A second, related bug found the same way (2026-09-05, via a second
+  recording)**: `tail_segs`/`head_segs` selected segments by *midpoint*
+  falling in the overlap window, not by whether the segment touched it at
+  all. A chunk that transcribes as one long segment spanning nearly the
+  whole window has a midpoint nowhere near a short overlap at its end --
+  even though its real content extends into it -- wrongly emptying
+  `tail_segs` and (via the fix above) duplicating that content instead of
+  splicing it. This was the *common* case for Parakeet output, not rare --
+  fixing it changed WER by ~0.1-0.15 across nearly every real run in this
+  research (see `eda/real_runs/FINDINGS.md`'s correction note). Fixed by
+  selecting on any temporal overlap (`s.end > overlap_start` /
+  `s.start < overlap_end`) instead of midpoint, regression test:
+  `test_long_tail_segment_still_finds_a_confident_match`.
 - A collapse-repeated-words post-processing filter for the repetition-loop
   artifact -- **confirmed by listening to the source audio (2026-09-03)**:
   the stutter is real, but Parakeet's repeat count is inflated (reads as
@@ -276,6 +290,17 @@ needed):
   compute for no clear matching benefit. Canary-1B-v2 specifically: no WER
   advantage found despite topping general leaderboards, and by far the
   slowest of the four (5.3x realtime vs. 19-39x).
+  **Update (2026-09-05): this "within noise, no clear winner" conclusion
+  is itself superseded.** A real `chunk_merge.py` bug (segments selected by
+  midpoint rather than by whether they touched the overlap window --
+  common when a chunk transcribes as one long segment; wrongly emptied
+  `tail_segs`, duplicating content) was inflating WER for every ONNX-int8
+  config in this comparison. Fixed and re-scored: **ONNX-int8 (`w30_o6`,
+  what Handy ships) now beats every NeMo/fp32 alternative on both WER and
+  throughput** -- the fp32 reference implementations were never actually
+  ahead on quality; the bug was making the shipped path look worse than it
+  is. Full corrected numbers in `eda/real_runs/FINDINGS.md`'s "Corrected
+  results, all runs, post-fix" section.
 
 ## 8. Explicitly out of scope for this research phase
 

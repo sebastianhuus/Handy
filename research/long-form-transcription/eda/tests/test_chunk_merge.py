@@ -127,6 +127,28 @@ def test_asymmetric_empty_tail_keeps_all_of_head():
     )
 
 
+def test_long_tail_segment_still_finds_a_confident_match():
+    # Regression test for a second real bug, found on a second recording
+    # (see ../real_runs/FINDINGS.md's "Cross-recording generalization"
+    # section): tail's one segment spans nearly the whole 30s chunk, so its
+    # *midpoint* (~15s) falls well outside the [24, 30] overlap window even
+    # though the segment's actual end (29.5s) genuinely extends into it.
+    # The old midpoint-based tail_segs filter wrongly excluded it, making
+    # tail_segs empty and skipping the match attempt entirely -- always
+    # falling back to "keep all of head", which duplicated the genuinely
+    # overlapping "hiring plans this quarter" instead of splicing it.
+    # Selecting by whether a segment touches the window at all (not by
+    # midpoint) fixes this: tail_segs is non-empty, the confident match is
+    # found, and the overlap is spliced normally.
+    a = make_chunk(0, 0, 30, [(0.5, 29.5, "we discussed the budget and hiring plans this quarter")])
+    b = make_chunk(1, 24, 54, [(24.0, 32.0, "hiring plans this quarter are looking strong")])
+    result = merge_chunks([a, b])
+    boundary = result.boundaries[0]
+    assert boundary.low_confidence is False
+    assert boundary.match_words == 4  # "hiring plans this quarter"
+    assert result.text == "we discussed the budget and hiring plans this quarter are looking strong"
+
+
 def test_empty_chunk_does_not_crash_and_is_skipped_cleanly():
     a = make_chunk(0, 0, 30, [(0, 30, "opening remarks about the agenda")])
     b = make_chunk(1, 24, 40, [])  # e.g. VAD trimmed this whole window to silence
