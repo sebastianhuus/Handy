@@ -253,6 +253,82 @@ def _(mo, plt, summaries):
 @app.cell
 def _(mo):
     mo.md("""
+    ## Quality vs. throughput: which configs are worth considering?
+
+    A config is **Pareto-optimal** if no other run in this dataset beats it
+    on *both* WER and throughput at once -- those are the only ones worth
+    picking between; everything else is strictly worse than some
+    alternative already on offer, for both axes at the same time. Uses
+    `wer_after_repeat_collapse` (this research's best-available quality
+    estimate) against `realtime_factor`.
+    """)
+    return
+
+
+@app.cell
+def _(EDA_DIR, mo, plt, summaries, sys):
+    sys.path.insert(0, str(EDA_DIR))
+    from pareto import ParetoPoint, pareto_frontier
+
+    _points = [
+        ParetoPoint(s["run"], s["wer_after_repeat_collapse"], s["realtime_factor"])
+        for s in summaries
+        if s.get("wer_after_repeat_collapse") is not None and s.get("realtime_factor") is not None
+    ]
+    mo.stop(
+        len(_points) < 2,
+        mo.md(
+            "*(need at least 2 runs with both WER and timing data to plot "
+            "a Pareto frontier -- this dataset doesn't have enough. "
+            "Synthetic fixtures never ran a real model, so they have no "
+            "timing at all.)*"
+        ),
+    )
+
+    _frontier = pareto_frontier(_points)
+    _frontier_labels = {p.label for p in _frontier}
+    _dominated = [p for p in _points if p.label not in _frontier_labels]
+    _frontier_sorted = sorted(_frontier, key=lambda p: p.wer)
+
+    _fig, _ax = plt.subplots(figsize=(7, 5))
+    if _dominated:
+        _ax.scatter(
+            [p.wer for p in _dominated],
+            [p.realtime_factor for p in _dominated],
+            color="#95a5a6",
+            label="dominated",
+            zorder=2,
+        )
+    _ax.plot(
+        [p.wer for p in _frontier_sorted],
+        [p.realtime_factor for p in _frontier_sorted],
+        color="#27ae60",
+        linestyle="--",
+        alpha=0.5,
+        zorder=1,
+    )
+    _ax.scatter(
+        [p.wer for p in _frontier_sorted],
+        [p.realtime_factor for p in _frontier_sorted],
+        color="#27ae60",
+        label="Pareto-optimal",
+        s=80,
+        zorder=3,
+    )
+    for _p in _points:
+        _ax.annotate(_p.label, (_p.wer, _p.realtime_factor), fontsize=8, xytext=(5, 5), textcoords="offset points")
+    _ax.set_xlabel("WER, after repeat-collapse (lower is better)")
+    _ax.set_ylabel("realtime factor (higher is better)")
+    _ax.set_title("Pareto frontier: quality vs. throughput")
+    _ax.legend()
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
     ## Reading these plots
 
     - **WER**: the number that actually answers "does this config produce a
