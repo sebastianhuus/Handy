@@ -195,24 +195,56 @@ needed):
   Some(TimestampGranularity::Segment) }` + `transcribe_with`). Its API
   usage was checked against `transcribe-rs`'s own source
   (`onnx/parakeet/mod.rs`, `lib.rs` on
-  [cjpais/transcribe-rs](https://github.com/cjpais/transcribe-rs)), not
-  guessed. **It has not been compiled** -- this sandbox's network egress
-  blocks `static.crates.io`, so `cargo check` can't fetch dependencies
-  here. Treat it as reviewed-against-source, not verified-by-compiler,
-  until it's built once locally.
+  [cjpais/transcribe-rs](https://github.com/cjpais/transcribe-rs)), and has
+  now been built and run for real (2026-09-03, local machine, not the
+  sandbox that wrote it) -- compiled clean on the first try (one
+  unused-import warning, fixed).
+- A real-audio sweep against a 46-minute lecture recording, at `12s/2s`,
+  `30s/0.1s` (near-zero-overlap control), `30s/6s`, and `60s/10s`. Real
+  Parakeet, real timing (26-47x realtime on this machine), real merge-step
+  metrics. Two concrete findings: `low_confidence` boundary rate drops
+  sharply as window/overlap grow (12s/2s is clearly too little overlap --
+  98.9% low-confidence vs. 67.3% at 60s/10s), and a repetition-loop artifact
+  ("uh uh uh uh..." x11) shows up identically across every window size,
+  including inside the very first chunk -- i.e. independent of chunk
+  position/length, not a chunking artifact. Full writeup, including whether
+  that repetition is genuine model hallucination or an artifact of real
+  stuttered speech (unconfirmed -- would need a source-audio listen):
+  `eda/real_runs/FINDINGS.md` (gitignored directory -- real recordings and
+  their transcripts stay local, never committed; regenerate by rerunning
+  `chunk_harness` per `README.md` if that directory gets cleaned up).
 
-**Not implemented -- needs real audio and a real model, which this sandbox
-doesn't have**:
+**Not implemented yet**:
 
-- Any actual answer to §2's hypothesis. Nothing above touches a real
-  Parakeet inference; the synthetic fixtures validate the *pipeline*
-  mechanics, not model behavior.
-- A hand-checked reference transcript for a real long recording (needed for
-  real WER numbers).
-- The `(W, O)` parameter sweep against real audio (§6).
+- Real WER numbers -- §2's hypothesis needs a hand-checked
+  `reference.txt` for a slice of the real recording, which doesn't exist
+  yet. Every metric gathered so far is a proxy (see `eda/real_runs/FINDINGS.md`
+  for what the proxies do and don't tell us).
 - A decision on whether the merge algorithm's `MIN_MATCH_WORDS = 3`
   threshold and midpoint-cut fallback are good enough, or need the
   proper-alignment upgrade noted in §4.
+- A collapse-repeated-words post-processing filter for the repetition-loop
+  artifact -- **confirmed by listening to the source audio (2026-09-03)**:
+  the stutter is real, but Parakeet's repeat count is inflated (reads as
+  duration-filling a real-but-shorter pause rather than pure
+  hallucination-from-silence). Since it's independent of `(W, O)` (identical
+  across every window size, including chunk 0), no windowing choice fixes
+  it. Detectable via a duration-anomaly-per-segment heuristic (the artifact
+  isn't just a repeated word, it's a repeated word stretched across an
+  implausibly long single segment for its word count) rather than raw
+  repeat-count, which matters because naive repeat-count clamping risks
+  eating genuine repeated words (emphatic "no no no", spelling/counting, a
+  real slow stammer on a meaningful word) -- duration-anomaly narrows that
+  false-positive risk but doesn't eliminate the tail case, which would need
+  actual semantic disambiguation. Not implemented here (out of scope for
+  this phase per §8), but a concrete, narrow follow-up independent of the
+  windowing work, with a known failure mode. **Cross-checked against an
+  independent transcript** (Wispr Flow note-taker, same recording): zero
+  repeated "uh"/"you" at the exact same 0:00-0:15 span, and real
+  disfluencies anywhere in the 46-minute transcript never exceed 4
+  consecutive repeats vs. Parakeet's 11x/10x -- meaningfully de-risks the
+  filter idea's false-positive concern. See `eda/real_runs/FINDINGS.md` for
+  the full writeup.
 
 ## 8. Explicitly out of scope for this research phase
 

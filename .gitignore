@@ -45,3 +45,10 @@ result
 
 # Python bytecode (scripts/)
 __pycache__/
+
+# Long-form-transcription research: real recordings and their transcripts
+# aren't fixtures -- keep them local, never committed.
+research/long-form-transcription/*.wav
+research/long-form-transcription/eda/real_runs/
+research/.wispr-dump
+research/long-form-transcription/chunk_harness/target/

@@ -24,7 +24,6 @@ use clap::Parser;
 use serde::Serialize;
 use transcribe_rs::onnx::parakeet::{ParakeetModel, ParakeetParams, TimestampGranularity};
 use transcribe_rs::onnx::Quantization;
-use transcribe_rs::SpeechModel;
 
 #[derive(Parser)]
 #[command(about = "Chunk a long WAV file and transcribe each chunk with Parakeet")]
