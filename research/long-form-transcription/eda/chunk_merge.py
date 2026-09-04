@@ -142,7 +142,18 @@ def merge_chunks(chunks: Sequence[Chunk]) -> MergedTranscript:
             # starting at/after the midpoint are head's territory.
             midpoint = (overlap_start + overlap_end) / 2
             drop_from_tail = len(_words([s for s in tail_segs if s.start >= midpoint]))
-            resume_from = len(_words([s for s in head_segs if s.start < midpoint]))
+            if tail_segs:
+                resume_from = len(_words([s for s in head_segs if s.start < midpoint]))
+            else:
+                # prev has *no* segments in the overlap window at all --
+                # its transcription pass simply ended early, an asymmetric-
+                # coverage case, not a disagreement. There's nothing on the
+                # tail side for head's early words to be "already covered
+                # by", so skipping them would just delete real content that
+                # only nxt ever transcribed. Confirmed against real audio:
+                # this exact case dropped a whole sentence from a merged
+                # transcript before this fix (see ../real_runs/FINDINGS.md).
+                resume_from = 0
             low_confidence = True
             match_words = 0
 

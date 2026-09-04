@@ -101,6 +101,32 @@ def test_disagreeing_overlap_falls_back_to_timestamp_cut():
     )
 
 
+def test_asymmetric_empty_tail_keeps_all_of_head():
+    # Regression test for a real bug found against real audio (see
+    # ../real_runs/FINDINGS.md): prev's transcription pass ended before the
+    # overlap window even started (no disagreement -- just no coverage), but
+    # nxt has one segment spanning the whole window. The old fallback
+    # treated that segment's start-before-midpoint as "already covered by
+    # tail" and silently deleted it -- an entire real sentence went missing
+    # from a merged transcript in practice. tail has nothing to compare
+    # against, so all of head must be kept.
+    a = make_chunk(0, 0, 30, [(0, 20, "opening remarks about the agenda")])
+    b = make_chunk(
+        1,
+        24,
+        54,
+        [(25.4, 33.2, "shared lectures between the two courses")],
+    )
+    result = merge_chunks([a, b])
+    boundary = result.boundaries[0]
+    assert boundary.low_confidence is True
+    assert boundary.match_words == 0
+    assert result.text == (
+        "opening remarks about the agenda "
+        "shared lectures between the two courses"
+    )
+
+
 def test_empty_chunk_does_not_crash_and_is_skipped_cleanly():
     a = make_chunk(0, 0, 30, [(0, 30, "opening remarks about the agenda")])
     b = make_chunk(1, 24, 40, [])  # e.g. VAD trimmed this whole window to silence

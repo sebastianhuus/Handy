@@ -222,29 +222,36 @@ needed):
   for what the proxies do and don't tell us).
 - A decision on whether the merge algorithm's `MIN_MATCH_WORDS = 3`
   threshold and midpoint-cut fallback are good enough, or need the
-  proper-alignment upgrade noted in §4.
+  proper-alignment upgrade noted in §4. **Update: fixed.** The real-audio
+  sweep found a confirmed, root-caused instance of this -- when one side
+  of a boundary has zero segments in the overlap window (asymmetric
+  coverage, not disagreement), the old fallback's segment-granularity
+  midpoint cut deleted the *other* side's only account of that content
+  entirely (an actual sentence went missing from a merged transcript).
+  Now fixed in `chunk_merge.py` (take all of `head_segs` when `tail_segs`
+  is empty) with a regression test built from the real bug
+  (`eda/tests/test_chunk_merge.py::test_asymmetric_empty_tail_keeps_all_of_head`).
 - A collapse-repeated-words post-processing filter for the repetition-loop
   artifact -- **confirmed by listening to the source audio (2026-09-03)**:
   the stutter is real, but Parakeet's repeat count is inflated (reads as
   duration-filling a real-but-shorter pause rather than pure
   hallucination-from-silence). Since it's independent of `(W, O)` (identical
   across every window size, including chunk 0), no windowing choice fixes
-  it. Detectable via a duration-anomaly-per-segment heuristic (the artifact
-  isn't just a repeated word, it's a repeated word stretched across an
-  implausibly long single segment for its word count) rather than raw
-  repeat-count, which matters because naive repeat-count clamping risks
-  eating genuine repeated words (emphatic "no no no", spelling/counting, a
-  real slow stammer on a meaningful word) -- duration-anomaly narrows that
-  false-positive risk but doesn't eliminate the tail case, which would need
-  actual semantic disambiguation. Not implemented here (out of scope for
-  this phase per §8), but a concrete, narrow follow-up independent of the
-  windowing work, with a known failure mode. **Cross-checked against an
-  independent transcript** (Wispr Flow note-taker, same recording): zero
-  repeated "uh"/"you" at the exact same 0:00-0:15 span, and real
-  disfluencies anywhere in the 46-minute transcript never exceed 4
-  consecutive repeats vs. Parakeet's 11x/10x -- meaningfully de-risks the
-  filter idea's false-positive concern. See `eda/real_runs/FINDINGS.md` for
-  the full writeup.
+  it. **Cross-checked against an independent transcript** (Wispr Flow
+  note-taker, same recording): zero repeated "uh"/"you" at the exact same
+  0:00-0:15 span, and real disfluencies anywhere in the 46-minute
+  transcript never exceed 4 consecutive repeats vs. Parakeet's 11x/10x --
+  de-risked the naive-filter false-positive concern enough to implement.
+  **Update: implemented** as `eda/postprocess.py::collapse_repeated_words`
+  (runs >=5 consecutive identical words collapsed to 1), with 8 unit tests.
+  Still doesn't solve the tail case of someone genuinely, slowly repeating
+  a meaningful word -- that would need actual semantic disambiguation, out
+  of scope here. **Measured impact**: closes part, not all, of the gap to
+  Wispr's transcript quality -- see `eda/real_runs/FINDINGS.md`'s "Does
+  simple post-processing alone close the gap to Wispr?" section for the
+  controlled before/after numbers and what residual gap remains (genuine
+  per-chunk misrecognition on technical terms, not fixable by rule-based
+  post-processing).
 
 ## 8. Explicitly out of scope for this research phase
 
