@@ -149,6 +149,23 @@ def normalize_reference(text: str) -> list[str]:
     return re.sub(r"[^\w' ]+", " ", text.lower()).split()
 
 
+def write_summary(row: dict, out_dir: Path) -> None:
+    """Write one evaluate_run() result to out_dir: <run>.summary.json plus
+    its raw and repeat-collapsed merged text. Shared by the CLI (main())
+    and the notebook's in-process "Regenerate summaries" button -- the
+    notebook calls evaluate_run() directly (not via subprocess) so it can
+    show live per-run progress, but the output format must stay identical
+    either way, hence the shared helper rather than two copies of this.
+    """
+    if "_merged_text_raw" not in row:
+        return
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{row['run']}.merged.txt").write_text(row["_merged_text_raw"])
+    (out_dir / f"{row['run']}.merged.cleaned.txt").write_text(row["_merged_text_cleaned"])
+    summary = {k: v for k, v in row.items() if not k.startswith("_")}
+    (out_dir / f"{row['run']}.summary.json").write_text(json.dumps(summary, indent=2))
+
+
 def print_table(rows: list[dict]) -> None:
     cols = [c for c in rows[0] if not c.startswith("_")]
     widths = {c: max(len(c), *(len(str(r.get(c, ""))) for r in rows)) for c in cols}
@@ -169,14 +186,8 @@ def main() -> None:
     rows = [evaluate_run(f, reference_words, args.wer_word_limit, args.strip_fillers) for f in files]
 
     if args.out_dir:
-        args.out_dir.mkdir(parents=True, exist_ok=True)
         for r in rows:
-            if "_merged_text_raw" not in r:
-                continue
-            (args.out_dir / f"{r['run']}.merged.txt").write_text(r["_merged_text_raw"])
-            (args.out_dir / f"{r['run']}.merged.cleaned.txt").write_text(r["_merged_text_cleaned"])
-            summary = {k: v for k, v in r.items() if not k.startswith("_")}
-            (args.out_dir / f"{r['run']}.summary.json").write_text(json.dumps(summary, indent=2))
+            write_summary(r, args.out_dir)
 
     print_table(rows)
 

@@ -7,7 +7,6 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import json
-    import subprocess
     import sys
     from pathlib import Path
 
@@ -15,7 +14,8 @@ def _():
     import matplotlib.pyplot as plt
 
     EDA_DIR = Path(__file__).resolve().parents[1]
-    return EDA_DIR, Path, json, mo, plt, subprocess, sys
+    sys.path.insert(0, str(EDA_DIR))
+    return EDA_DIR, Path, json, mo, plt
 
 
 @app.cell
@@ -104,44 +104,50 @@ def _(mo):
 
 @app.cell
 def _(
-    EDA_DIR,
     dataset_dir,
     has_reference,
     mo,
     reference_path,
     regenerate_button,
     strip_fillers_checkbox,
-    subprocess,
     summaries_dir,
-    sys,
 ):
     # Deliberately not `mo.stop`-gated: this cell must produce
     # `regen_run_count` on *every* run, including the very first (unclicked)
     # one, since the loader cell below depends on it to know when to re-read
     # the summaries directory. `mo.stop` raises before a `return` executes,
     # which would leave that dependency unresolved until first clicked.
+    #
+    # Calls evaluate_run() directly (in-process), not via subprocess -- the
+    # earlier subprocess version ran silently for the whole batch with zero
+    # visible progress, which read as a frozen notebook on anything more
+    # than a couple of runs (WER scoring is O(n*m) per run against the
+    # reference; real_runs/ with 7 runs against a ~6000-word reference
+    # takes well over a minute). mo.status.progress_bar can only show live
+    # per-item progress for a loop actually running inside this cell.
     if regenerate_button.value:
-        _cmd = [
-            sys.executable,
-            "evaluate.py",
-            "--run-dir",
-            str(dataset_dir),
-            "--out-dir",
-            str(summaries_dir),
-        ]
-        if has_reference:
-            _cmd += ["--reference", str(reference_path)]
-        if strip_fillers_checkbox.value:
-            _cmd += ["--strip-fillers"]
+        from evaluate import evaluate_run, normalize_reference, write_summary
 
-        _result = subprocess.run(_cmd, cwd=EDA_DIR, capture_output=True, text=True)
-        regen_output = mo.vstack(
-            [
-                mo.md(f"`{' '.join(_cmd)}`"),
-                mo.md(f"exit code: {_result.returncode}"),
-                mo.md("```\n" + (_result.stdout or "(no stdout)") + "\n```"),
-                mo.md("```\n" + _result.stderr + "\n```") if _result.stderr else mo.md(""),
-            ]
+        _files = sorted(dataset_dir.glob("*.json"))
+        _reference_words = normalize_reference(reference_path.read_text()) if has_reference else None
+
+        _rows = []
+        with mo.status.progress_bar(
+            total=len(_files),
+            title="Scoring runs",
+            subtitle="starting...",
+            completion_title="Done",
+            completion_subtitle=f"scored {len(_files)} run(s)",
+        ) as _bar:
+            for _f in _files:
+                _bar.update(subtitle=_f.stem)
+                _row = evaluate_run(_f, _reference_words, None, strip_fillers_checkbox.value)
+                write_summary(_row, summaries_dir)
+                _rows.append(_row)
+
+        regen_output = mo.ui.table(
+            [{k: v for k, v in r.items() if not k.startswith("_")} for r in _rows],
+            label="Just scored",
         )
     else:
         regen_output = mo.md("*(not run yet -- click the button above)*")
@@ -150,7 +156,7 @@ def _(
     # True then auto-resets to False (per mo.ui.run_button's own semantics),
     # so this cell runs twice per click regardless -- the loader cell below
     # just needs *some* value from this cell to depend on, so it re-runs
-    # after either pass and picks up whatever evaluate.py wrote to disk.
+    # after either pass and picks up whatever evaluate_run() wrote to disk.
     regen_run_count = 1 if regenerate_button.value else 0
     regen_output
     return (regen_run_count,)
@@ -266,8 +272,7 @@ def _(mo):
 
 
 @app.cell
-def _(EDA_DIR, mo, plt, summaries, sys):
-    sys.path.insert(0, str(EDA_DIR))
+def _(mo, plt, summaries):
     from pareto import ParetoPoint, pareto_frontier
 
     _points = [
