@@ -21,7 +21,7 @@ uv run pytest
 # fixtures/make_synthetic_fixtures.py)
 uv run python3 fixtures/make_synthetic_fixtures.py
 
-# Open the EDA notebook -- loads fixtures_summaries/ by default
+# Open the EDA notebook -- pick "fixtures" from the dropdown, no paths to type
 uv run notebook
 ```
 
@@ -75,12 +75,25 @@ uv run python3 run_engine.py --engine parakeet --input meeting.wav \
 # or: --engine canary --model nvidia/canary-1b-v2
 ```
 
-## Evaluating a run (either harness) -- reproducible metrics, no notebook needed
+## Dataset directory convention
+
+Both `evaluate.py` and the notebook expect one directory per dataset,
+directly under `eda/`, laid out like this (`fixtures/` and `real_runs/`
+both already follow it):
+
+```
+eda/<dataset>/
+    *.json            # run JSON from chunk_harness or model_harness
+    reference.txt      # optional -- enables real WER
+    summaries/          # evaluate.py's output: *.summary.json + merged text
+```
+
+## Evaluating a run -- reproducible metrics, no notebook needed
 
 ```bash
 cd research/long-form-transcription/eda
-uv run python3 evaluate.py --run-dir some_directory_of_run_jsons/ \
-    --reference reference.txt --strip-fillers --out-dir some_summaries_dir/
+uv run python3 evaluate.py --run-dir <dataset>/ \
+    --reference <dataset>/reference.txt --strip-fillers --out-dir <dataset>/summaries/
 ```
 
 Deterministic and dependency-free (stdlib only): same run JSON + reference
@@ -89,7 +102,9 @@ in, same table out, on any machine. Works whether the run JSON came from
 after `postprocess.py`'s repeat-collapse filter); without it you still get
 the proxy metrics from SPEC.md §6 (boundary confidence, words/audio-second,
 throughput). `--out-dir` writes one `*.summary.json` per run (plus its
-merged text) -- that's what the notebook below reads.
+merged text) -- that's what the notebook below reads. In practice you
+won't run this by hand often -- the notebook's "Regenerate summaries"
+button does exactly this for whichever dataset you've selected.
 
 ## Browsing results (marimo notebook) -- loads pre-computed JSON, no recompute
 
@@ -98,15 +113,15 @@ cd research/long-form-transcription/eda
 uv run notebook   # shortcut for: uv run marimo edit --no-token --watch notebooks/eda_long_form.py
 ```
 
-Loads a directory of `evaluate.py --out-dir` summaries (defaults to the
-bundled, synthetic `fixtures_summaries/` -- point it at your own real
-summaries directory, e.g. `real_runs/summaries/`, to browse a real sweep).
-Opening the notebook never re-runs the merge algorithm or WER scoring
-itself -- it only reads what `evaluate.py` already wrote, so nobody pays
-that compute cost just to look at existing results. Shows a sortable
-metrics table, bar charts (WER raw vs. after repeat-collapse,
-merge-boundary confidence, throughput), and per-run merged-text tabs. A
-"Regenerate summaries" section can run `evaluate.py` for you from inside
-the notebook (a button, with the `--run-dir`/`--reference`/etc. as text
-inputs) when you've produced new run JSON and want to re-score it --
-that's the one action in the notebook that costs anything, and it's opt-in.
+Pick a dataset from the dropdown at the top -- every other path (run JSON,
+`reference.txt`, `summaries/`) is derived from that one choice, nothing to
+type. Opening the notebook never re-runs the merge algorithm or WER
+scoring itself -- it only reads what `evaluate.py` already wrote (or, for
+a brand-new dataset with no `summaries/` yet, tells you to click the
+button first), so nobody pays that compute cost just to look at existing
+results. Shows a sortable metrics table, bar charts (WER raw vs. after
+repeat-collapse, merge-boundary confidence, throughput), and per-run
+merged-text tabs. The **"Regenerate summaries for this dataset"** button
+runs `evaluate.py` for you against the selected dataset when you've
+produced new run JSON and want to (re-)score it -- that's the one action
+in the notebook that costs anything, and it's opt-in.
