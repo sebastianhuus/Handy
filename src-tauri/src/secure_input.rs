@@ -94,8 +94,8 @@ pub fn unregister_cancel_fallback(app: &AppHandle) {
     imp::unregister_cancel_fallback(app)
 }
 
-/// Rebuild Carbon fallback registrations from the current settings and
-/// lifecycle state. This is called after shortcut-related settings change.
+/// Synchronize Carbon fallback registrations with current settings and
+/// lifecycle state while preserving unchanged registrations.
 pub fn reconcile_fallback(app: &AppHandle) {
     imp::reconcile_fallback(app)
 }
@@ -397,111 +397,111 @@ mod imp {
     /// shared state. Returns `true` only when every hotkey in the binding is
     /// immune (modifier-only, mouse-based, or there simply are none) — the
     /// caller's "no shadow needed at all" bookkeeping.
-    fn register_fallback_binding(
-        app: &AppHandle,
-        id: &str,
-        binding: &ShortcutBinding,
-        fallback: &mut FallbackState,
-    ) -> bool {
-        let mut all_immune = true;
-        let mut any_covered = false;
-        let mut any_degraded = false;
-        let mut any_uncovered = false;
-
-        for hotkey_string in &binding.current_bindings {
-            let Ok(hotkey) = hotkey_string.parse::<handy_keys::Hotkey>() else {
-                warn!(
-                    "SecureInput fallback: '{}' has unparseable binding '{}', skipping",
-                    id, hotkey_string
-                );
-                all_immune = false;
-                any_uncovered = true;
-                continue;
-            };
-
-            match &hotkey.key {
-                None => {
-                    debug!(
-                        "SecureInput fallback: '{}' ('{}') is modifier-only — immune, no shadow needed",
-                        id, hotkey_string
-                    );
-                    continue;
-                }
-                Some(k) if is_mouse_key(k) => {
-                    debug!(
-                        "SecureInput fallback: '{}' ('{}') is mouse-based — immune, no shadow needed",
-                        id, hotkey_string
-                    );
-                    continue;
-                }
-                Some(_) => {}
-            }
-
-            all_immune = false;
-
-            let Some((carbon_binding, degraded)) = carbon_equivalent(&hotkey) else {
-                warn!(
-                    "SecureInput fallback: '{}' ('{}') cannot be expressed via Carbon",
-                    id, hotkey_string
-                );
-                any_uncovered = true;
-                continue;
-            };
-
-            let mut shadow = binding.clone();
-            shadow.current_bindings = vec![carbon_binding.clone()];
-
-            match crate::shortcut::tauri_impl::register_shortcut(app, shadow.clone()) {
-                Ok(()) => {
-                    info!(
-                        "SecureInput fallback: '{}' registered via Carbon as '{}'{}",
-                        id,
-                        carbon_binding,
-                        if degraded {
-                            " (widened to either side)"
-                        } else {
-                            ""
-                        }
-                    );
-                    fallback.registered.push(shadow);
-                    if degraded {
-                        any_degraded = true;
-                    } else {
-                        any_covered = true;
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        "SecureInput fallback: could not cover '{}' ('{}'): {}",
-                        id, carbon_binding, e
-                    );
-                    any_uncovered = true;
-                }
-            }
-        }
-
-        if all_immune {
-            return true;
-        }
-
-        // Surface the binding under the single worst-case bucket a viewer
-        // would want to see: uncovered (some hotkey has no fallback at all)
-        // beats degraded (every shadow works, but at least one widened
-        // matching) beats plain covered.
-        if any_uncovered {
-            fallback.uncovered.push(id.to_string());
-        } else if any_degraded {
-            fallback.degraded.push(id.to_string());
-        } else if any_covered {
-            fallback.covered.push(id.to_string());
-        }
-
-        false
+    /// Desired fallback for one hotkey within a binding, computed without any
+    /// plugin calls.
+    enum ShadowPlan {
+        /// Modifier-only or mouse-based; unaffected by secure input.
+        Immune,
+        /// Cannot be represented through Carbon.
+        Uncovered,
+        /// Register this shadow through Carbon.
+        Shadow {
+            shadow: ShortcutBinding,
+            degraded: bool,
+        },
     }
 
-    /// Rebuild the fallback from current state. The operation mutex serializes
-    /// reconciliations, while the fallback mutex is released before every
-    /// global-shortcut plugin call to avoid lock-order inversion with callbacks.
+    fn plan_hotkey_shadow(id: &str, binding: &ShortcutBinding, hotkey_string: &str) -> ShadowPlan {
+        let Ok(hotkey) = hotkey_string.parse::<handy_keys::Hotkey>() else {
+            warn!(
+                "SecureInput fallback: '{}' has unparseable binding '{}', skipping",
+                id, hotkey_string
+            );
+            return ShadowPlan::Uncovered;
+        };
+
+        match &hotkey.key {
+            None => {
+                debug!(
+                    "SecureInput fallback: '{}' ('{}') is modifier-only — immune, no shadow needed",
+                    id, hotkey_string
+                );
+                return ShadowPlan::Immune;
+            }
+            Some(k) if is_mouse_key(k) => {
+                debug!(
+                    "SecureInput fallback: '{}' ('{}') is mouse-based — immune, no shadow needed",
+                    id, hotkey_string
+                );
+                return ShadowPlan::Immune;
+            }
+            Some(_) => {}
+        }
+
+        let Some((carbon_binding, degraded)) = carbon_equivalent(&hotkey) else {
+            warn!(
+                "SecureInput fallback: '{}' ('{}') cannot be expressed via Carbon",
+                id, hotkey_string
+            );
+            return ShadowPlan::Uncovered;
+        };
+
+        let mut shadow = binding.clone();
+        shadow.current_bindings = vec![carbon_binding];
+        ShadowPlan::Shadow { shadow, degraded }
+    }
+
+    /// Registrations match only when the callback id and Carbon shadow string
+    /// match. Each registered shadow always carries exactly one hotkey in
+    /// `current_bindings`.
+    fn same_shadow(a: &ShortcutBinding, b: &ShortcutBinding) -> bool {
+        a.id == b.id && a.current_bindings == b.current_bindings
+    }
+
+    /// Desired fallback for one binding, folded across every hotkey it
+    /// contains. `all_immune` mirrors the old "no shadow needed at all"
+    /// bookkeeping: true only when every hotkey is modifier-only, mouse-based,
+    /// or there simply are none. `any_uncovered` reflects only hotkeys that
+    /// are unregistrable in principle (parse failure or no Carbon
+    /// equivalent) — registration-time failures are folded in later by the
+    /// caller, once plugin calls have actually been attempted.
+    struct BindingPlan {
+        all_immune: bool,
+        any_uncovered: bool,
+        wanted: Vec<(ShortcutBinding, bool)>,
+    }
+
+    fn plan_binding(id: &str, binding: &ShortcutBinding) -> BindingPlan {
+        let mut plan = BindingPlan {
+            all_immune: true,
+            any_uncovered: false,
+            wanted: Vec::new(),
+        };
+
+        for hotkey_string in &binding.current_bindings {
+            match plan_hotkey_shadow(id, binding, hotkey_string) {
+                ShadowPlan::Immune => {}
+                ShadowPlan::Uncovered => {
+                    plan.all_immune = false;
+                    plan.any_uncovered = true;
+                }
+                ShadowPlan::Shadow { shadow, degraded } => {
+                    plan.all_immune = false;
+                    plan.wanted.push((shadow, degraded));
+                }
+            }
+        }
+
+        plan
+    }
+
+    /// Reconcile fallback registrations without replacing unchanged shadows.
+    /// The operation mutex serializes reconciliations; fallback state is
+    /// unlocked around plugin calls to avoid lock-order inversion.
+    ///
+    /// Carbon sends a release only to the registration that received the
+    /// press. Replacing a held push-to-talk registration loses its release.
+    /// See #1999.
     pub fn reconcile_fallback(app: &AppHandle) {
         let state = app.state::<SecureInputState>();
         let _operation = state.fallback_operation.lock().unwrap();
@@ -511,22 +511,6 @@ mod imp {
             std::mem::take(&mut *fallback)
         };
 
-        if !previous.registered.is_empty() {
-            info!(
-                "SecureInput fallback reconciling: removing {} Carbon shadow(s)",
-                previous.registered.len()
-            );
-        }
-        for binding in previous.registered {
-            if let Err(e) = crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone()) {
-                warn!(
-                    "SecureInput fallback: failed to unregister '{}': {}",
-                    binding.current_bindings.join(","),
-                    e
-                );
-            }
-        }
-
         let settings = settings::get_settings(app);
         let eligible = state.is_sustained()
             && app
@@ -534,8 +518,21 @@ mod imp {
                 .is_some()
             && settings.keyboard_implementation == KeyboardImplementation::HandyKeys;
 
-        let mut next = FallbackState::default();
+        // Surfaced under the single worst-case bucket a viewer would want to
+        // see: uncovered (some hotkey has no fallback at all) beats degraded
+        // (every shadow works, but at least one widened matching) beats plain
+        // covered. Folded across every hotkey the binding contains.
+        struct BindingOutcome {
+            id: String,
+            any_uncovered: bool,
+            any_degraded: bool,
+            any_covered: bool,
+        }
+        let mut outcomes: Vec<BindingOutcome> = Vec::new();
+        // (index into `outcomes`, shadow, degraded) candidates not yet registered.
+        let mut wanted: Vec<(usize, ShortcutBinding, bool)> = Vec::new();
         let mut immune = 0usize;
+
         if eligible {
             for (id, binding) in &settings.bindings {
                 if id == "cancel" && !state.cancel_requested.load(Ordering::SeqCst) {
@@ -545,11 +542,109 @@ mod imp {
                     continue;
                 }
 
-                if register_fallback_binding(app, id, binding, &mut next) {
+                let plan = plan_binding(id, binding);
+                if plan.all_immune {
                     immune += 1;
+                    continue;
+                }
+
+                let idx = outcomes.len();
+                outcomes.push(BindingOutcome {
+                    id: id.clone(),
+                    any_uncovered: plan.any_uncovered,
+                    any_degraded: false,
+                    any_covered: false,
+                });
+                for (shadow, degraded) in plan.wanted {
+                    wanted.push((idx, shadow, degraded));
                 }
             }
+        }
 
+        // Preserve unchanged registrations; unregister only stale shadows.
+        let (kept, stale): (Vec<ShortcutBinding>, Vec<ShortcutBinding>) =
+            previous.registered.into_iter().partition(|prev| {
+                wanted
+                    .iter()
+                    .any(|(_, shadow, _)| same_shadow(shadow, prev))
+            });
+
+        if !stale.is_empty() {
+            info!(
+                "SecureInput fallback reconciling: removing {} Carbon shadow(s), keeping {}",
+                stale.len(),
+                kept.len()
+            );
+        }
+        for binding in stale {
+            if let Err(e) = crate::shortcut::tauri_impl::unregister_shortcut(app, binding.clone()) {
+                warn!(
+                    "SecureInput fallback: failed to unregister '{}': {}",
+                    binding.current_bindings.join(","),
+                    e
+                );
+            }
+        }
+
+        let mut next = FallbackState::default();
+        for (idx, shadow, degraded) in wanted {
+            if kept.iter().any(|k| same_shadow(k, &shadow)) {
+                debug!(
+                    "SecureInput fallback: '{}' still registered via Carbon as '{}', left untouched",
+                    outcomes[idx].id,
+                    shadow.current_bindings.join(",")
+                );
+                next.registered.push(shadow);
+                if degraded {
+                    outcomes[idx].any_degraded = true;
+                } else {
+                    outcomes[idx].any_covered = true;
+                }
+                continue;
+            }
+
+            match crate::shortcut::tauri_impl::register_shortcut(app, shadow.clone()) {
+                Ok(()) => {
+                    info!(
+                        "SecureInput fallback: '{}' registered via Carbon as '{}'{}",
+                        outcomes[idx].id,
+                        shadow.current_bindings.join(","),
+                        if degraded {
+                            " (widened to either side)"
+                        } else {
+                            ""
+                        }
+                    );
+                    next.registered.push(shadow);
+                    if degraded {
+                        outcomes[idx].any_degraded = true;
+                    } else {
+                        outcomes[idx].any_covered = true;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "SecureInput fallback: could not cover '{}' ('{}'): {}",
+                        outcomes[idx].id,
+                        shadow.current_bindings.join(","),
+                        e
+                    );
+                    outcomes[idx].any_uncovered = true;
+                }
+            }
+        }
+
+        for outcome in outcomes {
+            if outcome.any_uncovered {
+                next.uncovered.push(outcome.id);
+            } else if outcome.any_degraded {
+                next.degraded.push(outcome.id);
+            } else if outcome.any_covered {
+                next.covered.push(outcome.id);
+            }
+        }
+
+        if eligible {
             info!(
                 "SecureInput fallback active: {} covered, {} degraded, {} uncovered, {} immune (user impact: {})",
                 next.covered.len(),
@@ -649,6 +744,88 @@ mod imp {
         })
         .await
         .map_err(|e| format!("Diagnostic task failed: {e}"))?
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn binding(id: &str, hotkeys: &[&str]) -> ShortcutBinding {
+            ShortcutBinding {
+                id: id.to_string(),
+                name: id.to_string(),
+                description: String::new(),
+                default_binding: String::new(),
+                current_bindings: hotkeys.iter().map(|h| h.to_string()).collect(),
+            }
+        }
+
+        #[test]
+        fn modifier_only_hotkey_is_immune() {
+            let b = binding("test", &["cmd"]);
+            assert!(matches!(
+                plan_hotkey_shadow("test", &b, "cmd"),
+                ShadowPlan::Immune
+            ));
+        }
+
+        #[test]
+        fn unparseable_hotkey_is_uncovered() {
+            let b = binding("test", &["not_a_real_hotkey!!"]);
+            assert!(matches!(
+                plan_hotkey_shadow("test", &b, "not_a_real_hotkey!!"),
+                ShadowPlan::Uncovered
+            ));
+        }
+
+        #[test]
+        fn plain_keyed_hotkey_is_covered_not_degraded() {
+            let b = binding("test", &["ctrl+space"]);
+            match plan_hotkey_shadow("test", &b, "ctrl+space") {
+                ShadowPlan::Shadow { degraded, .. } => assert!(!degraded),
+                _ => panic!("expected Shadow"),
+            }
+        }
+
+        #[test]
+        fn side_specific_modifier_hotkey_is_degraded() {
+            let b = binding("test", &["ctrlleft+space"]);
+            match plan_hotkey_shadow("test", &b, "ctrlleft+space") {
+                ShadowPlan::Shadow { degraded, .. } => assert!(degraded),
+                _ => panic!("expected Shadow"),
+            }
+        }
+
+        #[test]
+        fn same_shadow_matches_by_id_and_binding() {
+            let a = binding("test", &["ctrl+space"]);
+            let same = binding("test", &["ctrl+space"]);
+            let other_id = binding("other", &["ctrl+space"]);
+            let other_binding = binding("test", &["ctrl+shift+space"]);
+            assert!(same_shadow(&a, &same));
+            assert!(!same_shadow(&a, &other_id));
+            assert!(!same_shadow(&a, &other_binding));
+        }
+
+        #[test]
+        fn plan_binding_folds_all_immune() {
+            let b = binding("test", &["cmd", "shift"]);
+            let plan = plan_binding("test", &b);
+            assert!(plan.all_immune);
+            assert!(!plan.any_uncovered);
+            assert!(plan.wanted.is_empty());
+        }
+
+        #[test]
+        fn plan_binding_mixes_uncovered_and_coverable() {
+            // "fn" hotkeys have no Carbon equivalent at all (uncovered);
+            // "ctrl+space" is coverable — the binding should reflect both.
+            let b = binding("test", &["fn+space", "ctrl+space"]);
+            let plan = plan_binding("test", &b);
+            assert!(!plan.all_immune);
+            assert!(plan.any_uncovered);
+            assert_eq!(plan.wanted.len(), 1);
+        }
     }
 }
 
