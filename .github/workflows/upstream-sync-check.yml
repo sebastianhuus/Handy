@@ -40,6 +40,7 @@ jobs:
         if: steps.diff.outputs.count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh label create upstream-sync \
             --color FBCA04 \
@@ -50,6 +51,7 @@ jobs:
         if: steps.diff.outputs.count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           COUNT: ${{ steps.diff.outputs.count }}
           COMMITS: ${{ steps.diff.outputs.commits }}
         run: |
@@ -73,6 +75,7 @@ jobs:
         if: steps.diff.outputs.count == '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           existing=$(gh issue list --label upstream-sync --state open --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
